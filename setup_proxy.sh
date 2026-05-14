@@ -33,7 +33,7 @@ setup_server2() {
     fi
 
     info "Сервер 2 готов. Теперь на Сервере 1 выполните:"
-    info "  bash setup_proxy.sh --server1 $(curl -s ifconfig.me)"
+    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server1 $(curl -s ifconfig.me)"
 }
 
 setup_server1() {
@@ -51,7 +51,7 @@ EOF
     info "Переменные окружения установлены"
 
     info "Прокси настроен. Запускайте основной скрипт в этой же сессии:"
-    info "  bash reverse_proxy.sh --mode full"
+    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/xui-reverse-proxy/main/reverse_proxy.sh) --mode full"
     info ""
     info "После установки настройки apt останутся в /etc/apt/apt.conf.d/99-proxy.conf"
     info "Удалить их можно командой: rm /etc/apt/apt.conf.d/99-proxy.conf"
