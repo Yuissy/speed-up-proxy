@@ -18,6 +18,8 @@ setup_server2() {
     local SERVER1_IP=$1
     info "Настройка SOCKS5-прокси на Сервере 2 для Сервера 1 ($SERVER1_IP)"
 
+    command -v jq &>/dev/null || apt install -y jq
+
     ufw allow from "$SERVER1_IP" to any port 1080 proto tcp
     info "Порт 1080 открыт для $SERVER1_IP"
 
@@ -32,8 +34,10 @@ setup_server2() {
         info "Xray перезапущен"
     fi
 
+    local public_ip
+    public_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
     info "Сервер 2 готов. Теперь на Сервере 1 выполните:"
-    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server1 $(curl -s ifconfig.me)"
+    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server1 $public_ip"
 }
 
 setup_server1() {
