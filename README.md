@@ -11,11 +11,11 @@
 **Шаг 1: Настройка Сервера 2**
 
 ```bash
-bash setup_proxy.sh --server2 IP_СЕРВЕРА_1
+bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server2 IP_СЕРВЕРА_1
 ```
 **Шаг 2: Настройка Сервера 1**
 ```bash
-bash setup_proxy.sh --server1 IP_СЕРВЕРА_2
+bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server1 IP_СЕРВЕРА_2
 ```
 После установки
 Настройки apt сохраняются в /etc/apt/apt.conf.d/99-proxy.conf и могут использоваться для будущих обновлений. Удалить их можно командой:
