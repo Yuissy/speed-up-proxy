@@ -23,6 +23,8 @@ INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubuserco
 
 USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+')
 PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+')
+USERNAME=$(echo "$USERNAME" | tr -d '[:space:]')
+PASSWORD=$(echo "$PASSWORD" | tr -d '[:space:]')
 
 if [[ -z "$USERNAME" || -z "$PASSWORD" ]]; then
     error "Не удалось извлечь логин/пароль из вывода установки"
