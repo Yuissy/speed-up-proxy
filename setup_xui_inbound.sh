@@ -35,7 +35,9 @@ info "Пароль: $PASSWORD"
 
 # === 2. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
 PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';")
-WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';" | sed 's|^/||;s|/$||')
+WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';")
+WEB_BASE="${WEB_BASE#/}"
+WEB_BASE="${WEB_BASE%/}"
 info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
 
 # === 3. ПРИВЯЗЫВАЕМ К LOCALHOST ===
@@ -43,7 +45,11 @@ info "Привязываем панель к localhost..."
 systemctl stop x-ui
 sqlite3 /etc/x-ui/x-ui.db "UPDATE settings SET value = '127.0.0.1' WHERE key = 'webListen';"
 systemctl start x-ui
+echo "ОТЛАДКА: панель запущена, ждём..."
 sleep 3
+echo "ОТЛАДКА: после sleep, проверяем панель..."
+ss -tlnp | grep "$PANEL_PORT" || echo "ОТЛАДКА: порт $PANEL_PORT не слушается!"
+echo "ОТЛАДКА: переходим к логину..."
 
 # === 4. ЛОГИН ===
 info "Логинимся в панель..."
