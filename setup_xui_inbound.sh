@@ -19,7 +19,7 @@ CLIENT_UUID="fe4ab9ef-c336-4980-91b2-342102dc45ba"
 # === 1. УСТАНОВКА ПАНЕЛИ ===
 info "Устанавливаем панель 3x-ui v2.9.4..."
 
-INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1)
+INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1 | tee /dev/stderr)
 
 USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+')
 PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+')
@@ -45,11 +45,11 @@ sleep 3
 
 # === 4. ЛОГИН ===
 info "Логинимся в панель..."
-curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
+LOGIN_RESPONSE=$(curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
     -d "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" \
-    -H "Content-Type: application/json" > /dev/null
+    -H "Content-Type: application/json")
 
-grep -q '3x-ui' /tmp/xui-cookie.txt || error "Не удалось залогиниться"
+echo "$LOGIN_RESPONSE" | grep -q '"success":true' || error "Не удалось залогиниться: $LOGIN_RESPONSE"
 info "Сессия получена"
 
 # === 5. СОЗДАЁМ INBOUND ===
