@@ -15,42 +15,42 @@ error()   { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 DOMAIN="visualk-play.online"
 SECRET_PATH="/updates/templates/assets/v3/conf"
 CLIENT_UUID="fe4ab9ef-c336-4980-91b2-342102dc45ba"
-PANEL_USER="admin"
-PANEL_PASS="admin"
 
-# === 1. УСТАНОВКА ПАНЕЛИ ===
+# === 1. УСТАНОВКА ПАНЕЛИ С ПЕРЕХВАТОМ ВЫВОДА ===
 info "Устанавливаем панель 3x-ui v2.9.4..."
-echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4
 
-# Ждём завершения миграции
-sleep 3
+INSTALL_LOG=$(mktemp)
+echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1 | tee "$INSTALL_LOG"
 
-# === 2. ЗАДАЁМ СВОИ ЛОГИН/ПАРОЛЬ ===
-info "Устанавливаем логин/пароль: $PANEL_USER / $PANEL_PASS"
-x-ui setting -username "$PANEL_USER" -password "$PANEL_PASS"
+USERNAME=$(grep -oP 'Username:\s+\K\S+' "$INSTALL_LOG")
+PASSWORD=$(grep -oP 'Password:\s+\K\S+' "$INSTALL_LOG")
 
-# === 3. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
+info "Логин: $USERNAME"
+info "Пароль: $PASSWORD"
+rm -f "$INSTALL_LOG"
+
+# === 2. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
 PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';")
 WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';" | sed 's|^/||;s|/$||')
 info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
 
-# === 4. ПРИВЯЗЫВАЕМ К LOCALHOST ===
+# === 3. ПРИВЯЗЫВАЕМ К LOCALHOST ===
 info "Привязываем панель к localhost..."
 systemctl stop x-ui
 sqlite3 /etc/x-ui/x-ui.db "UPDATE settings SET value = '127.0.0.1' WHERE key = 'webListen';"
 systemctl start x-ui
 sleep 3
 
-# === 5. ЛОГИН ===
+# === 4. ЛОГИН ===
 info "Логинимся в панель..."
 curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-    -d "{\"Username\":\"$PANEL_USER\",\"Password\":\"$PANEL_PASS\"}" \
+    -d "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" \
     -H "Content-Type: application/json" > /dev/null
 
 grep -q '3x-ui' /tmp/xui-cookie.txt || error "Не удалось залогиниться"
 info "Сессия получена"
 
-# === 6. СОЗДАЁМ INBOUND ===
+# === 5. СОЗДАЁМ INBOUND ===
 info "Создаём inbound..."
 
 RESPONSE=$(curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/panel/api/inbounds/add" \
@@ -69,19 +69,18 @@ RESPONSE=$(curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/
 echo "$RESPONSE" | grep -q '"success":true' || error "Ошибка создания inbound: $RESPONSE"
 info "Inbound создан"
 
-# === 7. ПРОВЕРКА ===
+# === 6. ПРОВЕРКА ===
 sleep 2
 ss -tlnp | grep -q ":10000 " && info "✅ Порт 10000 слушается!" || warning "❌ Порт 10000 не слушается"
 
-# === 8. ВЫВОД ===
 echo ""
 echo "============================================"
 echo "  ПАНЕЛЬ УСТАНОВЛЕНА"
 echo "============================================"
 echo "  Порт панели: $PANEL_PORT"
 echo "  WebBasePath: $WEB_BASE"
-echo "  Логин:       $PANEL_USER"
-echo "  Пароль:      $PANEL_PASS"
+echo "  Логин:       $USERNAME"
+echo "  Пароль:      $PASSWORD"
 echo "  Inbound:     xhttp-cascade (порт 10000)"
 echo "  UUID:        $CLIENT_UUID"
 echo "============================================"
