@@ -16,18 +16,20 @@ DOMAIN="visualk-play.online"
 SECRET_PATH="/updates/templates/assets/v3/conf"
 CLIENT_UUID="fe4ab9ef-c336-4980-91b2-342102dc45ba"
 
-# === 1. УСТАНОВКА ПАНЕЛИ С ПЕРЕХВАТОМ ВЫВОДА ===
+# === 1. УСТАНОВКА ПАНЕЛИ ===
 info "Устанавливаем панель 3x-ui v2.9.4..."
 
-INSTALL_LOG=$(mktemp)
-echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1 | tee "$INSTALL_LOG"
+INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1)
 
-USERNAME=$(grep -oP 'Username:\s+\K\S+' "$INSTALL_LOG")
-PASSWORD=$(grep -oP 'Password:\s+\K\S+' "$INSTALL_LOG")
+USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+')
+PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+')
+
+if [[ -z "$USERNAME" || -z "$PASSWORD" ]]; then
+    error "Не удалось извлечь логин/пароль из вывода установки"
+fi
 
 info "Логин: $USERNAME"
 info "Пароль: $PASSWORD"
-rm -f "$INSTALL_LOG"
 
 # === 2. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
 PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';")
