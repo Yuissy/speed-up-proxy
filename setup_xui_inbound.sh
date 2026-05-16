@@ -47,9 +47,14 @@ sleep 3
 
 # === 4. ЛОГИН ===
 info "Логинимся в панель..."
-LOGIN_RESPONSE=$(echo "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" | \
+DATA="{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}"
+echo "ОТЛАДКА: DATA=[$DATA]"
+echo "ОТЛАДКА: USERNAME=[$USERNAME] (len=${#USERNAME})"
+echo "ОТЛАДКА: PASSWORD=[$PASSWORD] (len=${#PASSWORD})"
+LOGIN_RESPONSE=$(echo "$DATA" | \
     curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
     -d @- -H "Content-Type: application/json")
+echo "ОТЛАДКА: RESPONSE=$LOGIN_RESPONSE"
 
 echo "$LOGIN_RESPONSE" | grep -q '"success":true' || error "Не удалось залогиниться: $LOGIN_RESPONSE"
 info "Сессия получена"
