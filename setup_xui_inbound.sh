@@ -53,12 +53,13 @@ echo "ОТЛАДКА: переходим к логину..."
 
 # === 4. ЛОГИН ===
 info "Логинимся в панель..."
-DATA="{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}"
-echo "ОТЛАДКА: DATA=[$DATA]"
+echo "ОТЛАДКА: USERNAME=[$USERNAME] (len=${#USERNAME})"
+echo "ОТЛАДКА: PASSWORD=[$PASSWORD] (len=${#PASSWORD})"
 rm -f /tmp/xui-cookie.txt
-LOGIN_RESPONSE=$(curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-    -d "$DATA" \
-    -H "Content-Type: application/json")
+LOGIN_RESPONSE=$(jq -n --arg u "$USERNAME" --arg p "$PASSWORD" \
+    '{Username: $u, Password: $p}' | \
+    curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
+    -d @- -H "Content-Type: application/json")
 echo "ОТЛАДКА: RESPONSE=$LOGIN_RESPONSE"
 
 echo "$LOGIN_RESPONSE" | grep -q '"success":true' || error "Не удалось залогиниться: $LOGIN_RESPONSE"
