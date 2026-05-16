@@ -22,6 +22,9 @@ PANEL_PASS="admin"
 info "Устанавливаем панель 3x-ui v2.9.4..."
 echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4
 
+# Ждём завершения миграции
+sleep 3
+
 # === 2. ЗАДАЁМ СВОИ ЛОГИН/ПАРОЛЬ ===
 info "Устанавливаем логин/пароль: $PANEL_USER / $PANEL_PASS"
 x-ui setting -username "$PANEL_USER" -password "$PANEL_PASS"
