@@ -24,50 +24,50 @@ echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanae
 info "Останавливаем панель и привязываем к localhost..."
 systemctl stop x-ui
 sqlite3 /etc/x-ui/x-ui.db "UPDATE settings SET value = '127.0.0.1' WHERE key = 'webListen';"
+
+# === 3. ДОБАВЛЯЕМ INBOUND ЧЕРЕЗ БД ===
+info "Добавляем inbound через БД..."
+
+sqlite3 /etc/x-ui/x-ui.db "DELETE FROM inbounds WHERE port = 10000;"
+
+sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (remark, port, protocol, settings, stream_settings, sniffing, listen) VALUES (
+    'xhttp-cascade',
+    10000,
+    'vless',
+    '{\"clients\":[{\"id\":\"$CLIENT_UUID\",\"flow\":\"\"}],\"decryption\":\"none\"}',
+    '{\"network\":\"xhttp\",\"security\":\"none\",\"xhttpSettings\":{\"path\":\"$SECRET_PATH\",\"host\":\"$DOMAIN\",\"mode\":\"packet-up\",\"scMaxBufferedPosts\":30,\"scMaxEachPostBytes\":\"1000000-2000000\",\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\"},\"sockopt\":{\"tcpFastOpen\":false,\"tcpNoDelay\":true,\"tcpMaxSeg\":1440,\"tcpCongestion\":\"bbr\",\"tcpMptcp\":false,\"tcpKeepAliveIdle\":60,\"tcpKeepAliveInterval\":30,\"tcpUserTimeout\":10000,\"tcpWindowClamp\":600}}',
+    '{\"enabled\":true,\"destOverride\":[\"http\",\"tls\"],\"routeOnly\":true}',
+    '127.0.0.1'
+);"
+
+# === 4. ПЕРЕСОБИРАЕМ КОНФИГ ===
+info "Пересобираем config.json из БД..."
+x-ui migrate
+
+# === 5. ЗАПУСКАЕМ ПАНЕЛЬ ===
 systemctl start x-ui
-sleep 2
-
-# === 3. ПОЛУЧАЕМ ПАРАМЕТРЫ ИЗ БАЗЫ ===
-PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';" 2>/dev/null || echo "2053")
-WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';" 2>/dev/null | sed 's|^/||;s|/$||')
-info "Порт панели: $PANEL_PORT"
-info "WebBasePath: $WEB_BASE"
-
-# === 4. ЛОГИН ===
-info "Логинимся в панель..."
-LOGIN_RESPONSE=$(curl -s -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-    -d "username=admin&password=admin" \
-    -H "Content-Type: application/x-www-form-urlencoded" 2>/dev/null)
-
-if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-    info "Логин успешен (admin/admin)"
-    COOKIE=$(curl -s -c - -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-        -d "username=admin&password=admin" \
-        -H "Content-Type: application/x-www-form-urlencoded" 2>/dev/null | grep -oP '3x-ui\s+\K\S+' || true)
-else
-    error "Не удалось залогиниться: $LOGIN_RESPONSE"
-fi
-
-# === 5. СОЗДАНИЕ INBOUND ===
-info "Создаём inbound через API..."
-STREAM="{\"network\":\"xhttp\",\"security\":\"none\",\"xhttpSettings\":{\"path\":\"$SECRET_PATH\",\"host\":\"$DOMAIN\",\"mode\":\"packet-up\",\"scMaxBufferedPosts\":30,\"scMaxEachPostBytes\":\"1000000-2000000\",\"noSSEHeader\":false,\"xPaddingBytes\":\"100-1000\"},\"sockopt\":{\"tcpFastOpen\":false,\"tcpNoDelay\":true,\"tcpMaxSeg\":1440,\"tcpCongestion\":\"bbr\",\"tcpMptcp\":false,\"tcpKeepAliveIdle\":60,\"tcpKeepAliveInterval\":30,\"tcpUserTimeout\":10000,\"tcpWindowClamp\":600}}"
-SETTINGS="{\"clients\":[{\"id\":\"$CLIENT_UUID\",\"flow\":\"\"}],\"decryption\":\"none\"}"
-SNIFFING='{"enabled":true,"destOverride":["http","tls"],"routeOnly":true}'
-
-RESPONSE=$(curl -s -b "3x-ui=$COOKIE" -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/xui/inbound/add" \
-    -d "up=0&down=0&total=0&remark=xhttp-cascade&enable=true&expiryTime=0&listen=127.0.0.1&port=10000&protocol=vless&settings=$SETTINGS&streamSettings=$STREAM&sniffing=$SNIFFING")
-
-if echo "$RESPONSE" | grep -q '"success":true'; then
-    info "Inbound создан успешно"
-else
-    error "Не удалось создать inbound: $RESPONSE"
-fi
+sleep 3
 
 # === 6. ПРОВЕРКА ===
-systemctl restart x-ui
-sleep 3
 if ss -tlnp | grep -q ":10000 "; then
-    info "Порт 10000 слушается — всё работает!"
+    info "✅ Порт 10000 слушается — всё работает!"
 else
-    warning "Порт 10000 не слушается. Проверьте вручную."
+    warning "❌ Порт 10000 не слушается. Проверьте вручную."
+    echo "Проверьте:"
+    echo "  sqlite3 /etc/x-ui/x-ui.db \"SELECT remark, port, listen FROM inbounds WHERE port = 10000;\""
+    echo "  journalctl -u x-ui --no-pager -n 20"
 fi
+
+# === 7. ВЫВОД ДАННЫХ ===
+PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';" 2>/dev/null || echo "2053")
+WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';" 2>/dev/null | sed 's|^/||;s|/$||')
+
+echo ""
+echo "============================================"
+echo "  ПАНЕЛЬ УСТАНОВЛЕНА"
+echo "============================================"
+echo "  Порт панели: $PANEL_PORT"
+echo "  WebBasePath: $WEB_BASE"
+echo "  Inbound:     xhttp-cascade (порт 10000)"
+echo "  UUID:        $CLIENT_UUID"
+echo "============================================"
