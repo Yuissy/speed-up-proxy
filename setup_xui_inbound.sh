@@ -21,8 +21,8 @@ info "Устанавливаем панель 3x-ui v2.9.4..."
 
 INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1 | tee /dev/stderr)
 
-USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+')
-PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+')
+USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+' | tail -1)
+PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+' | tail -1)
 USERNAME=$(echo "$USERNAME" | tr -d '[:space:]')
 PASSWORD=$(echo "$PASSWORD" | tr -d '[:space:]')
 
