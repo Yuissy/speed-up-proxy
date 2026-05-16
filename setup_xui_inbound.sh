@@ -86,6 +86,10 @@ INEOF
 cat /usr/local/x-ui/bin/config.json | jq ".inbounds += [$INBOUND]" > /tmp/config_new.json
 mv /tmp/config_new.json /usr/local/x-ui/bin/config.json
 
+# Защищаем от перезаписи панелью
+chattr +i /usr/local/x-ui/bin/config.json
+info "config.json обновлён и защищён от перезаписи"
+
 # === 6. ДОБАВЛЯЕМ INBOUND В БД (для отображения в интерфейсе) ===
 info "Добавляем inbound в БД..."
 sqlite3 /etc/x-ui/x-ui.db "DELETE FROM inbounds WHERE port = 10000;"
@@ -111,7 +115,7 @@ if ss -tlnp | grep -q ":10000 "; then
 else
     warning "❌ Порт 10000 не слушается."
     echo ""
-    echo "Проверка конфига:"
+    echo "Inbound'ы в конфиге:"
     grep -E '"port"|"tag"' /usr/local/x-ui/bin/config.json | head -10
 fi
 
