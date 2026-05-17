@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Запуск: bash create_inbound.sh PANEL_PORT WEB_BASE DOMAIN SECRET_PATH CLIENT_UUID
+# Запуск: bash create_inbound.sh PANEL_PORT WEB_BASE DOMAIN SECRET_PATH CLIENT_UUID USERNAME PASSWORD
 
 PANEL_PORT="$1"
 WEB_BASE="$2"
 DOMAIN="$3"
 SECRET_PATH="$4"
 CLIENT_UUID="$5"
-
-# Парсим логин/пароль из лога установки
-USERNAME=$(grep -oP 'Username:\s+\K\S+' /tmp/install.log 2>/dev/null | tail -1 | tr -d '[:space:]')
-PASSWORD=$(grep -oP 'Password:\s+\K\S+' /tmp/install.log 2>/dev/null | tail -1 | tr -d '[:space:]')
+USERNAME="$6"
+PASSWORD="$7"
 
 # Логин
 curl -s -c /tmp/xui-cookie.txt --max-time 10 -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
