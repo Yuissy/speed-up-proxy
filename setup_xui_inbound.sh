@@ -18,92 +18,67 @@ CLIENT_UUID="fe4ab9ef-c336-4980-91b2-342102dc45ba"
 
 # === 1. УСТАНОВКА ПАНЕЛИ ===
 info "Устанавливаем панель 3x-ui v2.9.4..."
+echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4
 
-INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) v2.9.4 2>&1 | tee /dev/stderr)
+# === 2. ЖДЁМ ИНИЦИАЛИЗАЦИЮ ===
+info "Ждём инициализацию панели..."
+sleep 5
 
-USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+')
-PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+')
-USERNAME=$(echo "$USERNAME" | tr -d '[:space:]')
-PASSWORD=$(echo "$PASSWORD" | tr -d '[:space:]')
+# === 3. ЗАДАЁМ ЛОГИН/ПАРОЛЬ И ПРИВЯЗЫВАЕМ К LOCALHOST ===
+info "Настраиваем панель через CLI..."
+/usr/local/x-ui/x-ui setting -username "admin" -password "admin" -resetTwoFactor true
+/usr/local/x-ui/x-ui setting -listenIP "127.0.0.1"
 
-if [[ -z "$USERNAME" || -z "$PASSWORD" ]]; then
-    error "Не удалось извлечь логин/пароль из вывода установки"
-fi
+info "Панель настроена: admin/admin, слушает 127.0.0.1"
 
-info "Логин: $USERNAME"
-info "Пароль: $PASSWORD"
-
-# === 2. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
+# === 4. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
 PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';")
 WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';")
 WEB_BASE="${WEB_BASE#/}"
 WEB_BASE="${WEB_BASE%/}"
 info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
 
-# === 3. ПРИВЯЗЫВАЕМ К LOCALHOST ===
-info "Привязываем панель к localhost..."
-systemctl stop x-ui
+# === 5. ДОБАВЛЯЕМ INBOUND В БД ===
+info "Добавляем inbound в БД..."
 
-echo "ОТЛАДКА: текущий webListen = $(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webListen';")"
+STREAM=$(cat <<STEOF
+{"network":"xhttp","security":"none","xhttpSettings":{"path":"$SECRET_PATH","host":"$DOMAIN","mode":"packet-up","scMaxBufferedPosts":30,"scMaxEachPostBytes":"1000000-2000000","noSSEHeader":false,"xPaddingBytes":"100-1000"},"sockopt":{"tcpFastOpen":false,"tcpNoDelay":true,"tcpMaxSeg":1440,"tcpCongestion":"bbr","tcpMptcp":false,"tcpKeepAliveIdle":60,"tcpKeepAliveInterval":30,"tcpUserTimeout":10000,"tcpWindowClamp":600}}
+STEOF
+)
 
-sqlite3 /etc/x-ui/x-ui.db "UPDATE settings SET value = '127.0.0.1' WHERE key = 'webListen';"
+SETTINGS="{\"clients\":[{\"id\":\"$CLIENT_UUID\",\"flow\":\"\"}],\"decryption\":\"none\"}"
+SNIFFING='{"enabled":true,"destOverride":["http","tls"],"routeOnly":true}'
 
-echo "ОТЛАДКА: новый webListen = $(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webListen';")"
+# Экранируем кавычки для SQLite
+STREAM_ESC="${STREAM//\'/\'\'}"
+SETTINGS_ESC="${SETTINGS//\'/\'\'}"
+SNIFFING_ESC="${SNIFFING//\'/\'\'}"
 
-systemctl start x-ui
-echo "ОТЛАДКА: панель запущена, ждём..."
+sqlite3 /etc/x-ui/x-ui.db "DELETE FROM inbounds WHERE port = 10000;"
+sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (remark, port, protocol, settings, stream_settings, sniffing, listen, enable) VALUES ('xhttp-cascade', 10000, 'vless', '$SETTINGS_ESC', '$STREAM_ESC', '$SNIFFING_ESC', '127.0.0.1', 1);"
+
+info "Inbound добавлен в БД"
+
+# === 6. ПЕРЕЗАПУСКАЕМ ПАНЕЛЬ ===
+info "Перезапускаем панель..."
+systemctl restart x-ui
 sleep 3
-echo "ОТЛАДКА: после sleep, проверяем панель..."
-ss -tlnp | grep "$PANEL_PORT" || echo "ОТЛАДКА: порт $PANEL_PORT не слушается!"
-echo "ОТЛАДКА: переходим к логину..."
 
-# === 4. ЛОГИН ===
-info "Логинимся в панель..."
-DATA="{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}"
-echo "ОТЛАДКА: DATA=[$DATA]"
-echo "ОТЛАДКА: USERNAME=[$USERNAME] (len=${#USERNAME})"
-echo "ОТЛАДКА: PASSWORD=[$PASSWORD] (len=${#PASSWORD})"
-rm -f /tmp/xui-cookie.txt
-LOGIN_RESPONSE=$(curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-    -d "$DATA" \
-    -H "Content-Type: application/json")
-echo "ОТЛАДКА: RESPONSE=$LOGIN_RESPONSE"
+# === 7. ПРОВЕРКА ===
+if ss -tlnp | grep -q ":10000 "; then
+    info "✅ Порт 10000 слушается!"
+else
+    warning "❌ Порт 10000 не слушается"
+fi
 
-echo "$LOGIN_RESPONSE" | grep -q '"success":true' || error "Не удалось залогиниться: $LOGIN_RESPONSE"
-info "Сессия получена"
-
-# === 5. СОЗДАЁМ INBOUND ===
-info "Создаём inbound..."
-
-RESPONSE=$(curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/panel/api/inbounds/add" \
-    -H "Content-Type: application/json" \
-    -d "{
-  \"remark\": \"xhttp-cascade\",
-  \"enable\": true,
-  \"port\": 10000,
-  \"protocol\": \"vless\",
-  \"listen\": \"127.0.0.1\",
-  \"settings\": \"{\\\"clients\\\":[{\\\"id\\\":\\\"$CLIENT_UUID\\\",\\\"flow\\\":\\\"\\\"}],\\\"decryption\\\":\\\"none\\\"}\",
-  \"streamSettings\": \"{\\\"network\\\":\\\"xhttp\\\",\\\"security\\\":\\\"none\\\",\\\"xhttpSettings\\\":{\\\"path\\\":\\\"$SECRET_PATH\\\",\\\"host\\\":\\\"$DOMAIN\\\",\\\"mode\\\":\\\"packet-up\\\",\\\"scMaxBufferedPosts\\\":30,\\\"scMaxEachPostBytes\\\":\\\"1000000-2000000\\\",\\\"noSSEHeader\\\":false,\\\"xPaddingBytes\\\":\\\"100-1000\\\"},\\\"sockopt\\\":{\\\"tcpFastOpen\\\":false,\\\"tcpNoDelay\\\":true,\\\"tcpMaxSeg\\\":1440,\\\"tcpCongestion\\\":\\\"bbr\\\",\\\"tcpMptcp\\\":false,\\\"tcpKeepAliveIdle\\\":60,\\\"tcpKeepAliveInterval\\\":30,\\\"tcpUserTimeout\\\":10000,\\\"tcpWindowClamp\\\":600}}\",
-  \"sniffing\": \"{\\\"enabled\\\":true,\\\"destOverride\\\":[\\\"http\\\",\\\"tls\\\"],\\\"routeOnly\\\":true}\"
-}")
-
-echo "$RESPONSE" | grep -q '"success":true' || error "Ошибка создания inbound: $RESPONSE"
-info "Inbound создан"
-
-# === 6. ПРОВЕРКА ===
-sleep 2
-ss -tlnp | grep -q ":10000 " && info "✅ Порт 10000 слушается!" || warning "❌ Порт 10000 не слушается"
-
-# === 7. ВЫВОД ===
 echo ""
 echo "============================================"
 echo "  ПАНЕЛЬ УСТАНОВЛЕНА"
 echo "============================================"
 echo "  Порт панели: $PANEL_PORT"
 echo "  WebBasePath: $WEB_BASE"
-echo "  Логин:       $USERNAME"
-echo "  Пароль:      $PASSWORD"
+echo "  Логин:       admin"
+echo "  Пароль:      admin"
 echo "  Inbound:     xhttp-cascade (порт 10000)"
 echo "  UUID:        $CLIENT_UUID"
 echo "============================================"
