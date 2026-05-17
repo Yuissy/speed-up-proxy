@@ -42,11 +42,10 @@ info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
 
 # === 3. ЛОГИН ===
 info "Логинимся в панель..."
-rm -f /tmp/xui-cookie.txt /tmp/login-data.json
-jq -n --arg u "$USERNAME" --arg p "$PASSWORD" \
-    '{Username: $u, Password: $p}' > /tmp/login-data.json
+rm -f /tmp/xui-cookie.txt
 LOGIN_RESPONSE=$(curl -s -c /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
-    -d @/tmp/login-data.json -H "Content-Type: application/json")
+    -d "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" \
+    -H "Content-Type: application/json")
 echo "ОТЛАДКА: RESPONSE=$LOGIN_RESPONSE"
 
 echo "$LOGIN_RESPONSE" | grep -q '"success":true' || error "Не удалось залогиниться: $LOGIN_RESPONSE"
