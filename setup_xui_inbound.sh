@@ -34,11 +34,14 @@ info "Логин: $USERNAME"
 info "Пароль: $PASSWORD"
 
 # === 2. ПОЛУЧАЕМ ПОРТ И WEB_BASE ===
+info "Ждём завершения инициализации панели..."
+sleep 5
 PANEL_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webPort';")
 WEB_BASE=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key = 'webBasePath';")
 WEB_BASE="${WEB_BASE#/}"
 WEB_BASE="${WEB_BASE%/}"
 info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
+
 
 # === 3. ЛОГИН ===
 info "Логинимся в панель..."
