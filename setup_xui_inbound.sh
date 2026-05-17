@@ -43,10 +43,16 @@ WEB_BASE="${WEB_BASE%/}"
 info "Порт: $PANEL_PORT, Путь: $WEB_BASE"
 
 
-# === 3. ЛОГИН ===
+# === 3. ЛОГИН (ОТЛАДКА) ===
 info "Логинимся в панель..."
 rm -f /tmp/xui-cookie.txt
 set +euo pipefail
+
+# Сохраняем отправляемые данные в файл для проверки
+echo "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" > /tmp/debug-login-data.json
+echo "ОТЛАДКА: файл /tmp/debug-login-data.json:"
+cat /tmp/debug-login-data.json
+
 LOGIN_RESPONSE=$(curl -s -c /tmp/xui-cookie.txt --max-time 10 -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
     -d "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" \
     -H "Content-Type: application/json" 2>&1)
