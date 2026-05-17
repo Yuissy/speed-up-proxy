@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Запуск: bash create_inbound.sh PANEL_PORT WEB_BASE DOMAIN SECRET_PATH CLIENT_UUID USERNAME PASSWORD
 
 PANEL_PORT="$1"
 WEB_BASE="$2"
@@ -9,13 +8,16 @@ CLIENT_UUID="$5"
 USERNAME="$6"
 PASSWORD="$7"
 
+echo "DEBUG: PORT=$PANEL_PORT BASE=$WEB_BASE USER=$USERNAME PASS=$PASSWORD"
+
 # Логин
-curl -s -c /tmp/xui-cookie.txt --max-time 10 -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
+LOGIN_RESP=$(curl -s -c /tmp/xui-cookie.txt --max-time 10 -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/login" \
     -d "{\"Username\":\"$USERNAME\",\"Password\":\"$PASSWORD\"}" \
-    -H "Content-Type: application/json" > /dev/null
+    -H "Content-Type: application/json")
+echo "DEBUG: LOGIN=$LOGIN_RESP"
 
 # Создать inbound
-curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/panel/api/inbounds/add" \
+INBOUND_RESP=$(curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}/panel/api/inbounds/add" \
     -H "Content-Type: application/json" \
     -d "{
   \"remark\": \"xhttp-cascade\",
@@ -26,4 +28,7 @@ curl -s -b /tmp/xui-cookie.txt -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE}
   \"settings\": \"{\\\"clients\\\":[{\\\"id\\\":\\\"$CLIENT_UUID\\\",\\\"flow\\\":\\\"\\\"}],\\\"decryption\\\":\\\"none\\\"}\",
   \"streamSettings\": \"{\\\"network\\\":\\\"xhttp\\\",\\\"security\\\":\\\"none\\\",\\\"xhttpSettings\\\":{\\\"path\\\":\\\"$SECRET_PATH\\\",\\\"host\\\":\\\"$DOMAIN\\\",\\\"mode\\\":\\\"packet-up\\\",\\\"scMaxBufferedPosts\\\":30,\\\"scMaxEachPostBytes\\\":\\\"1000000-2000000\\\",\\\"noSSEHeader\\\":false,\\\"xPaddingBytes\\\":\\\"100-1000\\\"},\\\"sockopt\\\":{\\\"tcpFastOpen\\\":false,\\\"tcpNoDelay\\\":true,\\\"tcpMaxSeg\\\":1440,\\\"tcpCongestion\\\":\\\"bbr\\\",\\\"tcpMptcp\\\":false,\\\"tcpKeepAliveIdle\\\":60,\\\"tcpKeepAliveInterval\\\":30,\\\"tcpUserTimeout\\\":10000,\\\"tcpWindowClamp\\\":600}}\",
   \"sniffing\": \"{\\\"enabled\\\":true,\\\"destOverride\\\":[\\\"http\\\",\\\"tls\\\"],\\\"routeOnly\\\":true}\"
-}" | grep -q '"success":true' && echo "✅ Inbound создан" || echo "❌ Ошибка создания inbound"
+}")
+echo "DEBUG: INBOUND=$INBOUND_RESP"
+
+echo "$INBOUND_RESP" | grep -q '"success":true' && echo "✅ Inbound создан" || echo "❌ Ошибка создания inbound"
