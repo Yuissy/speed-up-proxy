@@ -135,37 +135,66 @@ speed_test() {
     local TEST_URL="https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh"
     local TMP_FILE="/tmp/speedtest_github.tmp"
 
+    # Функция для извлечения секунд из вывода time
+    _parse_time() {
+        local t="$1"
+        # Ожидаемый формат: 0m5.643s
+        if [[ "$t" =~ ^([0-9]+)m([0-9.]+)s$ ]]; then
+            local min="${BASH_REMATCH[1]}"
+            local sec="${BASH_REMATCH[2]}"
+            echo "$(( min * 60 )) + $sec" | bc -l
+        else
+            # На случай, если строка уже просто число
+            echo "$t" | sed 's/[^0-9.]//g'
+        fi
+    }
+
     # Тест без прокси
     echo "Тест БЕЗ прокси..."
-    local time_direct
-    time_direct=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
+    local time_direct_raw
+    time_direct_raw=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
     local size_direct
     size_direct=$(stat -c%s "$TMP_FILE" 2>/dev/null || echo "0")
+    local time_direct_sec
+    time_direct_sec=$(_parse_time "$time_direct_raw")
     rm -f "$TMP_FILE"
 
     # Тест с прокси (если настроен)
-    local time_proxy="N/A"
+    local time_proxy_raw="N/A"
+    local time_proxy_sec=0
     local size_proxy=0
     if [[ -n "${http_proxy:-}" ]]; then
         echo "Тест С прокси ($http_proxy)..."
-        time_proxy=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
+        time_proxy_raw=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
         size_proxy=$(stat -c%s "$TMP_FILE" 2>/dev/null || echo "0")
+        time_proxy_sec=$(_parse_time "$time_proxy_raw")
         rm -f "$TMP_FILE"
     else
         echo "Прокси не настроен (переменные http_proxy/https_proxy не заданы)."
     fi
 
+    # Расчёт скоростей (в Мбит/с и МБ/с)
+    local speed_direct_mbps="N/A"
+    local speed_proxy_mbps="N/A"
+    if [[ "$time_direct_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_direct_sec > 0" | bc -l) )); then
+        speed_direct_mbps=$(echo "scale=2; $size_direct * 8 / 1000000 / $time_direct_sec" | bc -l)
+    fi
+    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_proxy_sec > 0" | bc -l) )); then
+        speed_proxy_mbps=$(echo "scale=2; $size_proxy * 8 / 1000000 / $time_proxy_sec" | bc -l)
+    fi
+
     echo ""
     echo "Результаты теста скорости:"
-    echo "  Без прокси:  ${time_direct:-N/A}  (размер: ${size_direct} байт)"
-    echo "  С прокси:    ${time_proxy:-N/A}  (размер: ${size_proxy} байт)"
-    if [[ "$time_proxy" != "N/A" && "$time_direct" != "N/A" ]]; then
-        local dt=$(echo "$time_direct" | sed 's/[^0-9.]//g')
-        local pt=$(echo "$time_proxy" | sed 's/[^0-9.]//g')
-        if (( $(echo "$dt > 0" | bc -l) )); then
-            local ratio=$(echo "scale=2; $dt / $pt" | bc -l)
-            echo "  Ускорение: в ${ratio} раза"
+    echo "  Без прокси:  ${speed_direct_mbps} Мбит/с  (${size_direct} байт за ${time_direct_sec} сек)"
+    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]]; then
+        echo "  С прокси:    ${speed_proxy_mbps} Мбит/с  (${size_proxy} байт за ${time_proxy_sec} сек)"
+        if [[ "$speed_direct_mbps" != "N/A" && "$speed_proxy_mbps" != "N/A" ]]; then
+            local ratio
+            ratio=$(echo "scale=2; $speed_proxy_mbps / $speed_direct_mbps" | bc -l)
+            echo "  Ускорение:   в ${ratio} раза"
         fi
+    else
+        echo "  С прокси:    N/A"
     fi
     echo ""
     info "Тест завершён"
