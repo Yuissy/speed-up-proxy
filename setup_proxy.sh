@@ -167,10 +167,10 @@ speed_test() {
     # Расчёт скоростей (Мбит/с) через awk
     local speed_direct_mbps="N/A"
     local speed_proxy_mbps="N/A"
-    if [[ "$time_direct_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_direct_sec > 0" | bc -l 2>/dev/null || echo "0") )); then
+    if [[ "$time_direct_sec" =~ ^[0-9.]+$ ]] && (( $(awk -v t="$time_direct_sec" 'BEGIN { print (t > 0) ? 1 : 0 }') )); then
         speed_direct_mbps=$(awk -v size="$size_direct" -v time="$time_direct_sec" 'BEGIN { printf "%.2f", (size * 8) / (time * 1000000) }')
     fi
-    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_proxy_sec > 0" | bc -l 2>/dev/null || echo "0") )); then
+    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]] && (( $(awk -v t="$time_proxy_sec" 'BEGIN { print (t > 0) ? 1 : 0 }') )); then
         speed_proxy_mbps=$(awk -v size="$size_proxy" -v time="$time_proxy_sec" 'BEGIN { printf "%.2f", (size * 8) / (time * 1000000) }')
     fi
 
