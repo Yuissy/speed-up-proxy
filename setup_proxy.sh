@@ -135,18 +135,9 @@ speed_test() {
     local TEST_URL="https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh"
     local TMP_FILE="/tmp/speedtest_github.tmp"
 
-    # Функция для извлечения секунд из вывода time
+    # Вспомогательная функция: из "0m5.643s" делает секунды (через awk)
     _parse_time() {
-        local t="$1"
-        # Ожидаемый формат: 0m5.643s
-        if [[ "$t" =~ ^([0-9]+)m([0-9.]+)s$ ]]; then
-            local min="${BASH_REMATCH[1]}"
-            local sec="${BASH_REMATCH[2]}"
-            echo "$(( min * 60 )) + $sec" | bc -l
-        else
-            # На случай, если строка уже просто число
-            echo "$t" | sed 's/[^0-9.]//g'
-        fi
+        echo "$1" | awk -F'[ms]' '{ printf "%.3f", ($1 * 60) + $2 }'
     }
 
     # Тест без прокси
@@ -173,14 +164,14 @@ speed_test() {
         echo "Прокси не настроен (переменные http_proxy/https_proxy не заданы)."
     fi
 
-    # Расчёт скоростей (в Мбит/с и МБ/с)
+    # Расчёт скоростей (Мбит/с) через awk
     local speed_direct_mbps="N/A"
     local speed_proxy_mbps="N/A"
-    if [[ "$time_direct_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_direct_sec > 0" | bc -l) )); then
-        speed_direct_mbps=$(echo "scale=2; $size_direct * 8 / 1000000 / $time_direct_sec" | bc -l)
+    if [[ "$time_direct_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_direct_sec > 0" | bc -l 2>/dev/null || echo "0") )); then
+        speed_direct_mbps=$(awk -v size="$size_direct" -v time="$time_direct_sec" 'BEGIN { printf "%.2f", (size * 8) / (time * 1000000) }')
     fi
-    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_proxy_sec > 0" | bc -l) )); then
-        speed_proxy_mbps=$(echo "scale=2; $size_proxy * 8 / 1000000 / $time_proxy_sec" | bc -l)
+    if [[ "$time_proxy_sec" =~ ^[0-9.]+$ ]] && (( $(echo "$time_proxy_sec > 0" | bc -l 2>/dev/null || echo "0") )); then
+        speed_proxy_mbps=$(awk -v size="$size_proxy" -v time="$time_proxy_sec" 'BEGIN { printf "%.2f", (size * 8) / (time * 1000000) }')
     fi
 
     echo ""
@@ -190,7 +181,7 @@ speed_test() {
         echo "  С прокси:    ${speed_proxy_mbps} Мбит/с  (${size_proxy} байт за ${time_proxy_sec} сек)"
         if [[ "$speed_direct_mbps" != "N/A" && "$speed_proxy_mbps" != "N/A" ]]; then
             local ratio
-            ratio=$(echo "scale=2; $speed_proxy_mbps / $speed_direct_mbps" | bc -l)
+            ratio=$(awk -v srv="$speed_proxy_mbps" -v srd="$speed_direct_mbps" 'BEGIN { printf "%.2f", srv / srd }')
             echo "  Ускорение:   в ${ratio} раза"
         fi
     else
