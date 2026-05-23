@@ -24,10 +24,6 @@ SERVER2_IP="144.31.66.45"
 SERVER2_PORT=42376
 SERVER2_UUID="80a8e7de-45a2-4041-b884-f646331fdb07"
 
-# Geo-файлы RoscomVPN
-GEOIP_URL="https://github.com/hydraponique/roscomvpn-geoip/releases/latest/download/geoip.dat"
-GEOSITE_URL="https://github.com/hydraponique/roscomvpn-geosite/releases/latest/download/geosite.dat"
-
 # Экранирование для SQLite
 sql_escape() {
     local var="$1"
@@ -35,7 +31,169 @@ sql_escape() {
 }
 
 # ============================================
-# ШАГ 1: УСТАНОВКА ПАНЕЛИ (ПОСЛЕДНЯЯ ВЕРСИЯ)
+# ФУНКЦИИ (идентичны финальному скрипту)
+# ============================================
+
+# Модификация дефолтного Xray Template Config (с fallback)
+modify_default_template() {
+    local server2_ip=$1
+    local server2_port=$2
+    local server2_uuid=$3
+    local secret_path=$4
+    
+    local db_path="/etc/x-ui/x-ui.db"
+    
+    # Получаем дефолтный шаблон (может быть пустым)
+    local default_template
+    default_template=$(sqlite3 "$db_path" "SELECT value FROM settings WHERE key = 'xrayTemplateConfig';" 2>/dev/null || true)
+    
+    # Если шаблон пуст — генерируем полный JSON с дефолтными секциями
+    if [[ -z "$default_template" ]]; then
+        warning "Дефолтный шаблон в БД отсутствует. Создаю полный шаблон..."
+        default_template='{
+  "log": {"loglevel": "warning", "access": "none", "error": "", "dnsLog": false, "maskAddress": ""},
+  "api": {"tag": "api", "services": ["HandlerService", "LoggerService", "StatsService"]},
+  "inbounds": [],
+  "outbounds": [],
+  "policy": {
+    "levels": {"0": {"statsUserDownlink": true, "statsUserUplink": true}},
+    "system": {"statsInboundDownlink": true, "statsInboundUplink": true, "statsOutboundDownlink": false, "statsOutboundUplink": false}
+  },
+  "routing": {"domainStrategy": "AsIs", "rules": []},
+  "stats": {},
+  "metrics": {"tag": "metrics_out", "listen": "127.0.0.1:11111"}
+}'
+    fi
+    
+    # Наши outbounds
+    local new_outbounds
+    new_outbounds=$(cat <<OUTEOF
+[
+    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+    {
+      "tag": "cascade",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "$server2_ip",
+          "port": $server2_port,
+          "users": [{"id": "$server2_uuid", "flow": "", "encryption": "none"}]
+        }]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "fingerprint": "chrome",
+        "xhttpSettings": {
+          "path": "$secret_path",
+          "host": "",
+          "mode": "packet-up",
+          "scMaxBufferedPosts": 30,
+          "scMaxEachPostBytes": "1000000-2000000",
+          "noSSEHeader": false,
+          "xPaddingBytes": "100-1000"
+        }
+      }
+    },
+    {"tag": "blocked", "protocol": "blackhole", "settings": {}}
+]
+OUTEOF
+)
+
+    # Наши правила маршрутизации
+    local new_routing
+    new_routing=$(cat <<REOF
+{
+    "domainStrategy": "AsIs",
+    "rules": [
+      {"type": "field", "ip": ["geoip:private"], "outboundTag": "direct"},
+      {"type": "field", "domain": ["domain:ifconfig.me","domain:ipinfo.io","domain:2ip.ru","domain:ipify.org","domain:icanhazip.com"], "outboundTag": "blocked"},
+      {"type": "field", "protocol": ["bittorrent"], "outboundTag": "blocked"},
+      {"type": "field", "domain": ["geosite:category-ads-all","geosite:win-spy"], "outboundTag": "blocked"},
+      {"type": "field", "domain": ["ext:geosite_RU.dat:ru-blocked"], "outboundTag": "cascade"},
+      {"type": "field", "ip": ["geoip:ru"], "outboundTag": "direct"},
+      {"type": "field", "network": "tcp,udp", "outboundTag": "cascade"}
+    ]
+}
+REOF
+)
+    
+    # Заменяем outbounds и routing через jq
+    local modified_template
+    if ! modified_template=$(jq \
+        --argjson outbounds "$new_outbounds" \
+        --argjson routing "$new_routing" \
+        '.outbounds = $outbounds | .routing = $routing' \
+        <<< "$default_template"); then
+        error "Не удалось модифицировать шаблон через jq"
+    fi
+    
+    # Сохраняем обратно в БД
+    modified_template=$(sql_escape "$modified_template")
+    sqlite3 "$db_path" "INSERT OR REPLACE INTO settings (key, value) VALUES ('xrayTemplateConfig', '$modified_template');"
+    info "Xray Template Config обновлён (модификация дефолтного шаблона)"
+}
+
+# Создание inbound на порту 10000 (через SQLite с заголовками)
+configure_inbound() {
+    local domain=$1
+    local secret_path=$2
+    local client_uuid=$3
+    
+    local db_path="/etc/x-ui/x-ui.db"
+    if [[ ! -f "$db_path" ]]; then
+        error "База данных панели не найдена. Inbound не создан."
+    fi
+    
+    local stream_settings
+    stream_settings=$(cat <<STEOF
+{
+  "network": "xhttp",
+  "security": "none",
+  "xhttpSettings": {
+    "path": "$secret_path",
+    "host": "$domain",
+    "mode": "packet-up",
+    "scMaxBufferedPosts": 30,
+    "scMaxEachPostBytes": "1000000-2000000",
+    "noSSEHeader": false,
+    "xPaddingBytes": "100-1000",
+    "headers": {
+      "Server": "nginx/1.25.0",
+      "Content-Type": "text/html; charset=UTF-8",
+      "X-Powered-By": "PHP/8.1"
+    }
+  },
+  "sockopt": {
+    "tcpFastOpen": false,
+    "tcpNoDelay": true,
+    "tcpMaxSeg": 1440,
+    "tcpCongestion": "bbr",
+    "tcpMptcp": false,
+    "tcpKeepAliveIdle": 60,
+    "tcpKeepAliveInterval": 30,
+    "tcpUserTimeout": 10000,
+    "tcpWindowClamp": 600
+  }
+}
+STEOF
+)
+    
+    local inbound_settings="{\"clients\":[{\"id\":\"$client_uuid\",\"flow\":\"\"}],\"decryption\":\"none\"}"
+    local sniffing='{"enabled":true,"destOverride":["http","tls"],"routeOnly":true}'
+    local tag="inbound-127.0.0.1:10000"
+    
+    stream_settings=$(sql_escape "$stream_settings")
+    inbound_settings=$(sql_escape "$inbound_settings")
+    sniffing=$(sql_escape "$sniffing")
+    
+    sqlite3 "$db_path" "DELETE FROM inbounds WHERE port = 10000;"
+    sqlite3 "$db_path" "INSERT INTO inbounds (user_id, remark, port, protocol, settings, stream_settings, sniffing, listen, enable, tag) VALUES (1, 'xhttp-cascade', 10000, 'vless', '$inbound_settings', '$stream_settings', '$sniffing', '127.0.0.1', 1, '$tag');"
+    
+    info "Inbound создан успешно"
+}
+
+# ============================================
+# ШАГ 1: УСТАНОВКА ПАНЕЛИ
 # ============================================
 info "Устанавливаем панель 3x-ui (последняя версия)..."
 
@@ -45,11 +203,11 @@ USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+' | tr -d '[:spac
 PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+' | tr -d '[:space:]')
 
 if [[ -z "$USERNAME" || -z "$PASSWORD" ]]; then
-    error "Не удалось извлечь логин/пароль из вывода установки"
+    warning "Не удалось извлечь логин/пароль, используем admin/admin"
+else
+    info "Логин: $USERNAME"
+    info "Пароль: $PASSWORD"
 fi
-
-info "Логин: $USERNAME"
-info "Пароль: $PASSWORD"
 
 info "Ждём инициализации панели..."
 sleep 5
@@ -80,139 +238,27 @@ info "Перезапускаем панель..."
 systemctl restart x-ui
 sleep 4
 
-info "Проверяем интерфейс панели..."
-ss -tlnp | grep "$PANEL_PORT"
+# ============================================
+# ШАГ 5: МОДИФИЦИРУЕМ ШАБЛОН (МАРШРУТИЗАЦИЯ)
+# ============================================
+info "Модифицируем дефолтный шаблон..."
+modify_default_template "$SERVER2_IP" "$SERVER2_PORT" "$SERVER2_UUID" "$SECRET_PATH"
 
 # ============================================
-# ШАГ 5: СКАЧИВАЕМ GEO-ФАЙЛЫ
+# ШАГ 6: СОЗДАЁМ INBOUND
 # ============================================
-info "Скачиваем geo-файлы RoscomVPN..."
-
-mkdir -p /usr/local/share/xray /usr/local/x-ui/bin
-
-curl -L --max-time 60 -o /usr/local/share/xray/geoip.dat "$GEOIP_URL"
-curl -L --max-time 60 -o /usr/local/share/xray/geosite.dat "$GEOSITE_URL"
-
-# Копируем в папку панели
-cp /usr/local/share/xray/geoip.dat /usr/local/x-ui/bin/geoip.dat
-cp /usr/local/share/xray/geosite.dat /usr/local/x-ui/bin/geosite.dat
-
-info "Geo-файлы установлены"
+info "Создаём inbound..."
+configure_inbound "$DOMAIN" "$SECRET_PATH" "$CLIENT_UUID"
 
 # ============================================
-# ШАГ 6: СОЗДАЁМ INBOUND ЧЕРЕЗ SQLITE
-# ============================================
-info "Создаём inbound XHTTP..."
-
-STREAM_SETTINGS=$(cat <<STEOF
-{
-  "network": "xhttp",
-  "security": "none",
-  "xhttpSettings": {
-    "path": "$SECRET_PATH",
-    "host": "$DOMAIN",
-    "mode": "packet-up",
-    "scMaxBufferedPosts": 30,
-    "scMaxEachPostBytes": "1000000-2000000",
-    "noSSEHeader": false,
-    "xPaddingBytes": "100-1000"
-  },
-  "sockopt": {
-    "tcpFastOpen": false,
-    "tcpNoDelay": true,
-    "tcpMaxSeg": 1440,
-    "tcpCongestion": "bbr",
-    "tcpMptcp": false,
-    "tcpKeepAliveIdle": 60,
-    "tcpKeepAliveInterval": 30,
-    "tcpUserTimeout": 10000,
-    "tcpWindowClamp": 600
-  }
-}
-STEOF
-)
-
-INBOUND_SETTINGS="{\"clients\":[{\"id\":\"$CLIENT_UUID\",\"flow\":\"\"}],\"decryption\":\"none\"}"
-# Только http и tls, без quic и fakedns
-SNIFFING='{"enabled":true,"destOverride":["http","tls"],"routeOnly":true}'
-TAG="inbound-127.0.0.1:10000"
-
-STREAM_SETTINGS=$(sql_escape "$STREAM_SETTINGS")
-INBOUND_SETTINGS=$(sql_escape "$INBOUND_SETTINGS")
-SNIFFING=$(sql_escape "$SNIFFING")
-
-# Удаляем старый inbound на порту 10000
-sqlite3 /etc/x-ui/x-ui.db "DELETE FROM inbounds WHERE port = 10000;"
-
-# Вставляем новый (с tag и user_id)
-sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, remark, port, protocol, settings, stream_settings, sniffing, listen, enable, tag) VALUES (1, 'xhttp-cascade', 10000, 'vless', '$INBOUND_SETTINGS', '$STREAM_SETTINGS', '$SNIFFING', '127.0.0.1', 1, '$TAG');"
-
-info "Inbound создан"
-
-# ============================================
-# ШАГ 7: XRAY TEMPLATE CONFIG (МАРШРУТИЗАЦИЯ)
-# ============================================
-info "Записываем маршрутизацию..."
-
-XRAY_TEMPLATE=$(cat <<XEOF
-{
-  "outbounds": [
-    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
-    {
-      "tag": "cascade",
-      "protocol": "vless",
-      "settings": {
-        "vnext": [{
-          "address": "$SERVER2_IP",
-          "port": $SERVER2_PORT,
-          "users": [{"id": "$SERVER2_UUID", "flow": "", "encryption": "none"}]
-        }]
-      },
-      "streamSettings": {
-        "network": "xhttp",
-        "fingerprint": "chrome",
-        "xhttpSettings": {
-          "path": "$SECRET_PATH",
-          "host": "",
-          "mode": "packet-up",
-          "scMaxBufferedPosts": 30,
-          "scMaxEachPostBytes": "1000000-2000000",
-          "noSSEHeader": false,
-          "xPaddingBytes": "100-1000"
-        }
-      }
-    },
-    {"tag": "blocked", "protocol": "blackhole", "settings": {}}
-  ],
-  "routing": {
-    "domainStrategy": "AsIs",
-    "rules": [
-      {"type": "field", "domain": ["geosite:CATEGORY-ADS","geosite:WIN-SPY","geosite:TORRENT"], "outboundTag": "blocked"},
-      {"type": "field", "domain": ["domain:ifconfig.me","domain:ipinfo.io","domain:2ip.ru","domain:ipify.org","domain:icanhazip.com"], "outboundTag": "blocked"},
-      {"type": "field", "ip": ["geoip:PRIVATE"], "outboundTag": "direct"},
-      {"type": "field", "ip": ["geoip:DIRECT"], "outboundTag": "direct"},
-      {"type": "field", "domain": ["geosite:CATEGORY-RU","geosite:APPLE","geosite:STEAM","geosite:RIOT","geosite:ESCAPEFROMTARKOV","geosite:FACEIT","geosite:TWITCH"], "outboundTag": "direct"},
-      {"type": "field", "domain": ["geosite:YOUTUBE","geosite:TELEGRAM","geosite:GITHUB","geosite:GOOGLE-PLAY"], "outboundTag": "cascade"},
-      {"type": "field", "network": "tcp,udp", "outboundTag": "cascade"}
-    ]
-  }
-}
-XEOF
-)
-
-XRAY_TEMPLATE=$(sql_escape "$XRAY_TEMPLATE")
-sqlite3 /etc/x-ui/x-ui.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('xrayTemplateConfig', '$XRAY_TEMPLATE');"
-info "Маршрутизация записана"
-
-# ============================================
-# ШАГ 8: ПЕРЕЗАПУСК ДЛЯ ПРИМЕНЕНИЯ ВСЕГО
+# ШАГ 7: ПЕРЕЗАПУСК ДЛЯ ПРИМЕНЕНИЯ ВСЕГО
 # ============================================
 info "Перезапускаем панель..."
 systemctl restart x-ui
 sleep 4
 
 # ============================================
-# ШАГ 9: ПРОВЕРКИ
+# ШАГ 8: ПРОВЕРКИ
 # ============================================
 info "Проверяем порт 10000..."
 if ss -tlnp | grep -q ":10000 "; then
