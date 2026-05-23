@@ -30,6 +30,20 @@ sql_escape() {
     echo "${var//\'/\'\'}"
 }
 
+# ------------------------------------------------------------
+# Обёртка curl с поддержкой SOCKS5-прокси
+# Если http_proxy установлен в формате socks5h://host:port,
+# используем --socks5-hostname, иначе обычный curl
+# ------------------------------------------------------------
+_curl() {
+    if [[ -n "${http_proxy:-}" ]] && [[ "${http_proxy}" == socks5h://* ]]; then
+        local socks_host="${http_proxy#socks5h://}"
+        curl --socks5-hostname "$socks_host" "$@"
+    else
+        curl "$@"
+    fi
+}
+
 # ============================================
 # ФУНКЦИИ (идентичны финальному скрипту)
 # ============================================
@@ -193,11 +207,11 @@ STEOF
 }
 
 # ============================================
-# ШАГ 1: УСТАНОВКА ПАНЕЛИ
+# ШАГ 1: УСТАНОВКА ПАНЕЛИ (используем _curl)
 # ============================================
 info "Устанавливаем панель 3x-ui (последняя версия)..."
 
-INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) 2>&1 | tee /dev/stderr)
+INSTALL_OUTPUT=$(echo -e "n\nn\n4\ny" | bash <(_curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) 2>&1 | tee /dev/stderr)
 
 USERNAME=$(echo "$INSTALL_OUTPUT" | grep -oP 'Username:\s+\K\S+' | tr -d '[:space:]')
 PASSWORD=$(echo "$INSTALL_OUTPUT" | grep -oP 'Password:\s+\K\S+' | tr -d '[:space:]')
@@ -270,6 +284,7 @@ fi
 info "Проверяем Xray..."
 journalctl -u x-ui -n 5 --no-pager | grep -E "(started|ERROR|Warning)" || true
 
+# Проверка логина (локальный запрос, прокси не нужен)
 info "Проверяем логин в панель..."
 LOGIN_RESPONSE=$(curl -s -X POST "http://127.0.0.1:$PANEL_PORT/${WEB_BASE_PATH}/login" \
     -d '{"Username":"admin","Password":"admin"}' \
