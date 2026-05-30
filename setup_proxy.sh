@@ -50,7 +50,7 @@ setup_server2() {
     public_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
     echo ""
     info "Сервер 2 готов. Теперь на Сервере 1 выполните:"
-    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/xui-reverse-proxy/main/setup_proxy.sh) --server1 $public_ip"
+    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/speed-up-proxy/main/setup_proxy.sh) --server1 $public_ip"
     echo ""
     warning "Если IP Сервера 1 изменится, доступ к прокси пропадёт."
     warning "Обновите правило UFW: ufw delete allow from $SERVER1_IP to any port 1080 proto tcp && ufw allow from НОВЫЙ_IP to any port 1080 proto tcp"
@@ -71,12 +71,16 @@ EOF
     export https_proxy="socks5h://$SERVER2_IP:1080"
     info "Переменные окружения установлены"
 
+    # Временный .curlrc для всех дочерних процессов curl (включая установщик 3x-ui)
+    echo "socks5h = $SERVER2_IP:1080" >> ~/.curlrc
+    info "~/.curlrc настроен на прокси (будет удалён после установки)"
+
     echo ""
     info "Прокси настроен. Запускайте основной скрипт в этой же сессии:"
-    info "  bash <(curl -Ls https://raw.githubusercontent.com/Yuissy/xui-reverse-proxy/main/reverse_proxy_v2.sh) --mode full"
-    info ""
-    info "После установки настройки apt останутся в /etc/apt/apt.conf.d/99-proxy.conf"
-    info "Удалить их можно командой: rm /etc/apt/apt.conf.d/99-proxy.conf"
+    info "  http_proxy=\"socks5h://$SERVER2_IP:1080\" https_proxy=\"socks5h://$SERVER2_IP:1080\" bash <(curl -Ls --socks5-hostname $SERVER2_IP:1080 https://raw.githubusercontent.com/Yuissy/xui-reverse-proxy/main/reverse_proxy_v2.sh) --mode full"
+    echo ""
+    info "После установки удалите строку из ~/.curlrc:"
+    info "  sed -i '/socks5h/d' ~/.curlrc"
 }
 
 # ---------- Сервер 2: удаление прокси ----------
@@ -124,6 +128,10 @@ cleanup_server1() {
         warning "Файл 99-proxy.conf не найден"
     fi
 
+    # Удаляем строку с socks5h из ~/.curlrc
+    sed -i '/socks5h/d' ~/.curlrc 2>/dev/null || true
+    info "Строка прокси удалена из ~/.curlrc"
+
     unset http_proxy https_proxy 2>/dev/null || true
     info "Переменные http_proxy и https_proxy сброшены"
     info "Прокси на Сервере 1 полностью удалён"
@@ -132,7 +140,7 @@ cleanup_server1() {
 # ---------- Тест скорости ----------
 speed_test() {
     section "Тест скорости скачивания GitHub (без прокси vs через прокси)"
-    local TEST_URL="https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh"
+    local TEST_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
     local TMP_FILE="/tmp/speedtest_github.tmp"
 
     # Вспомогательная функция: из "0m5.643s" делает секунды (через awk)
@@ -143,7 +151,7 @@ speed_test() {
     # Тест без прокси
     echo "Тест БЕЗ прокси..."
     local time_direct_raw
-    time_direct_raw=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
+    time_direct_raw=$( { time curl -sL --max-time 60 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
     local size_direct
     size_direct=$(stat -c%s "$TMP_FILE" 2>/dev/null || echo "0")
     local time_direct_sec
@@ -156,7 +164,7 @@ speed_test() {
     local size_proxy=0
     if [[ -n "${http_proxy:-}" ]]; then
         echo "Тест С прокси ($http_proxy)..."
-        time_proxy_raw=$( { time curl -sL --max-time 30 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
+        time_proxy_raw=$( { time curl -sL --max-time 60 -o "$TMP_FILE" "$TEST_URL"; } 2>&1 | grep real | awk '{print $2}')
         size_proxy=$(stat -c%s "$TMP_FILE" 2>/dev/null || echo "0")
         time_proxy_sec=$(_parse_time "$time_proxy_raw")
         rm -f "$TMP_FILE"
