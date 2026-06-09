@@ -751,7 +751,7 @@ configure_server1_xray() {
           "shortIds": ["${sid1}", "${sid2}", "${sid3}"],
           "settings": {
             "publicKey": "${reality_public_key}",
-            "fingerprint": "chrome",
+            "fingerprint": "firefox",
             "serverName": "",
             "spiderX": "/"
           }
