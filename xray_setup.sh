@@ -100,7 +100,6 @@ install_dependencies() {
         curl wget unzip jq openssl sqlite3
         ufw fail2ban ca-certificates gnupg
         python3 proxychains4
-        cron
         nano dnsutils net-tools iproute2
         tcpdump mtr ncat htop logrotate
         certbot python3-certbot-dns-cloudflare
@@ -443,6 +442,7 @@ SCRIPT
     chmod +x "$SCRIPT_DIR/update_geo.sh"
 
     # Cron
+    apt-get install -y cron
     systemctl enable cron
     systemctl start cron
     local cron_xray="0 4 * * 6 $SCRIPT_DIR/auto_update_xray.sh >> /var/log/xray-cascade/update.log 2>&1"
