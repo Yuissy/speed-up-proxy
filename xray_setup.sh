@@ -448,8 +448,7 @@ SCRIPT
     local cron_xray="0 4 * * 6 $SCRIPT_DIR/auto_update_xray.sh >> /var/log/xray-cascade/update.log 2>&1"
     local cron_geo="0 3 * * 0 $SCRIPT_DIR/update_geo.sh >> /var/log/xray-cascade/update.log 2>&1"
 
-    (crontab -l 2>/dev/null | grep -v "auto_update_xray\|update_geo"; \
-        echo "$cron_xray"; echo "$cron_geo") | crontab -
+    (crontab -l 2>/dev/null || true; echo "$cron_xray"; echo "$cron_geo") | crontab -
 
     info "Автообновление настроено (Xray — суббота 04:00, geo — воскресенье 03:00)"
 }
