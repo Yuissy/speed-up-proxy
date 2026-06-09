@@ -51,7 +51,10 @@ random_port() {
     local port
     while true; do
         port=$(shuf -i 10000-60000 -n 1)
-        ss -tlnp 2>/dev/null | grep -q ":$port " || echo "$port" && return
+        if ! ss -tlnp 2>/dev/null | grep -q ":$port "; then
+            echo "$port"
+            return
+        fi
     done
 }
 
