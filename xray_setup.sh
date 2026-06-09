@@ -311,23 +311,61 @@ EOF
 # FAIL2BAN
 ###############################################################################
 setup_fail2ban() {
+    local mode="${1:-server1}"
     section "Настройка Fail2ban"
-    systemctl enable fail2ban
-    systemctl start fail2ban
 
-    cat > /etc/fail2ban/jail.d/xray-cascade.conf <<'EOF'
+    if [[ "$mode" == "server2" ]]; then
+        cat > /etc/fail2ban/jail.d/xray-cascade.conf <<'EOF'
+[DEFAULT]
+bantime.increment = true
+bantime.multiplier = 2
+bantime.maxtime = 604800
+bantime.overalljails = true
+
 [sshd]
 enabled = true
 port = ssh
-maxretry = 5
+backend = systemd
+maxretry = 3
+bantime = 3600
+findtime = 600
+EOF
+    else
+        cat > /etc/fail2ban/jail.d/xray-cascade.conf <<'EOF'
+[DEFAULT]
+bantime.increment = true
+bantime.multiplier = 2
+bantime.maxtime = 604800
+bantime.overalljails = true
+
+[sshd]
+enabled = true
+port = ssh
+backend = systemd
+maxretry = 3
 bantime = 3600
 findtime = 600
 
-[nginx-http-auth]
+[nginx-limit-req]
 enabled = true
-EOF
+port = http,https
+logpath = /var/log/nginx/error.log
+maxretry = 10
+bantime = 3600
+findtime = 600
 
-    systemctl reload fail2ban
+[nginx-botsearch]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/access.log
+maxretry = 5
+bantime = 86400
+findtime = 3600
+EOF
+    fi
+
+    systemctl enable fail2ban
+    systemctl restart fail2ban || true
     info "Fail2ban настроен"
 }
 
