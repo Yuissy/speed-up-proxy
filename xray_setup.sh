@@ -44,7 +44,7 @@ generate_uuid() {
 }
 
 generate_path() {
-    tr -dc 'a-z0-9' < /dev/urandom | head -c 24
+    openssl rand -hex 12
 }
 
 random_port() {
