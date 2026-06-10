@@ -21,7 +21,7 @@ question(){ echo -e "${YELLOW}[?]${NC} $*"; }
 XRAY_BIN="/usr/local/bin/xray"
 XRAY_CONF="/usr/local/etc/xray/config.json"
 XRAY_CONF_DIR="/usr/local/etc/xray"
-XRAY_LOG_DIR="/var/log/xray"
+XRAY_LOG_DIR="/var/log/xray-cascade"
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 NGINX_LOCATIONS="/etc/nginx/locations"
 SCRIPT_DIR="/usr/local/xray-cascade"
@@ -421,6 +421,7 @@ SCRIPT
 #!/usr/bin/env bash
 set -euo pipefail
 LOG="/var/log/xray-cascade/update.log"
+mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
 GEO_DIR="/usr/local/share/xray"
@@ -457,6 +458,7 @@ SCRIPT
 # LOG ROTATION
 ###############################################################################
 setup_logrotate() {
+    local mode="${1:-server1}"
     section "Настройка ротации логов"
 
     mkdir -p "$XRAY_LOG_DIR"
@@ -474,6 +476,10 @@ $XRAY_LOG_DIR/*.log {
         systemctl kill -s USR1 xray 2>/dev/null || true
     endscript
 }
+EOF
+
+    if [[ "$mode" == "server1" ]]; then
+        cat >> "$LOGROTATE_CONF" <<EOF
 
 /var/log/nginx/*.log {
     daily
@@ -488,6 +494,7 @@ $XRAY_LOG_DIR/*.log {
     endscript
 }
 EOF
+    fi
 
     info "Logrotate настроен: хранение 7 дней, ежедневная ротация"
 }
@@ -1182,14 +1189,13 @@ run_server2() {
     install_xray
     setup_xray_service
     setup_bbr
-    setup_fail2ban
+    setup_fail2ban "server2"
     setup_auto_updates
-    setup_logrotate
+    setup_logrotate "server2"
     setup_log_switcher
 
-    mkdir -p "$SCRIPT_DIR"
-    "$SCRIPT_DIR/update_geo.sh" 2>/dev/null || \
-        { info "Устанавливаем geo файлы..."; install_geo_files; }
+    mkdir -p /usr/local/share/xray
+    "$SCRIPT_DIR/update_geo.sh" || warning "Geo файлы не загружены, обновите позже: $SCRIPT_DIR/update_geo.sh"
 
     configure_server2 "$listen_port" "$uuid" "$xhttp_path"
     setup_firewall "server2" "$listen_port" "$server1_ip"
@@ -1273,9 +1279,9 @@ run_server1() {
     setup_xray_service
     install_nginx
     setup_bbr
-    setup_fail2ban
+    setup_fail2ban "server1"
     setup_auto_updates
-    setup_logrotate
+    setup_logrotate "server1"
     setup_log_switcher
 
     mkdir -p "$SCRIPT_DIR"
