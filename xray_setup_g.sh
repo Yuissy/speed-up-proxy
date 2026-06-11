@@ -412,11 +412,11 @@ cp -f "$TMP/xray" /usr/local/bin/xray
 chmod +x /usr/local/bin/xray
 rm -rf "$TMP"
 systemctl restart xray
-log "Xray обновлён до $LATEST"
+log "Xray обновлён до \$LATEST"
 SCRIPT
     chmod +x "$SCRIPT_DIR/auto_update_xray.sh"
 
-    # Скрипт обновления geo файлов (Gemini Fix: качает базы runetfreedom с проверкой размера)
+    # Скрипт обновления geo файлов (Gemini Fix: качает легковесные RU базы)
     cat > "$SCRIPT_DIR/update_geo.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -427,27 +427,30 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 GEO_DIR="/usr/local/share/xray"
 mkdir -p "$GEO_DIR"
 
-for file in geoip.dat geosite.dat; do
-    # Используем проверенный репозиторий runetfreedom с расширенными базами
-    URL="https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/${file}"
+log "Запуск обновления легковесных RU-баз..."
+
+# Качаем напрямую из актуальной ветки runetfreedom и сохраняем с суффиксом _RU с помощью curl
+if curl -sL --max-time 90 -o "$GEO_DIR/geosite_RU.dat.tmp" "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" && \
+   curl -sL --max-time 90 -o "$GEO_DIR/geoip_RU.dat.tmp" "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat"; then
     
-    if curl -sL --max-time 90 -o "$GEO_DIR/${file}.tmp" "$URL"; then
-        # Проверяем размер. База должна весить хотя бы больше 50 Кб (51200 байт), иначе это 9-байтовый HTML мусор
-        SIZE=$(stat -c%s "$GEO_DIR/${file}.tmp" 2>/dev/null || stat -f%z "$GEO_DIR/${file}.tmp" 2>/dev/null || echo 0)
-        if [ "$SIZE" -gt 51200 ]; then
-            mv "$GEO_DIR/${file}.tmp" "$GEO_DIR/${file}"
-            log "Обновлён: $file (Размер: $((SIZE/1024)) KB)"
-        else
-            log "Ошибка: Файл $file слишком мал ($SIZE байт). Возможно GitHub выдал ошибку. Отмена."
-            rm -f "$GEO_DIR/${file}.tmp"
-            exit 1
-        fi
+    # Проверяем, что файлы не пустые пустышки (размер больше 10 Кб)
+    SIZE_SITE=$(stat -c%s "$GEO_DIR/geosite_RU.dat.tmp" 2>/dev/null || echo 0)
+    SIZE_IP=$(stat -c%s "$GEO_DIR/geoip_RU.dat.tmp" 2>/dev/null || echo 0)
+    
+    if [ "$SIZE_SITE" -gt 10000 ] && [ "$SIZE_IP" -gt 10000 ]; then
+        mv "$GEO_DIR/geosite_RU.dat.tmp" "$GEO_DIR/geosite_RU.dat"
+        mv "$GEO_DIR/geoip_RU.dat.tmp" "$GEO_DIR/geoip_RU.dat"
+        log "Легковесные RU-базы успешно обновлены."
     else
-        rm -f "$GEO_DIR/${file}.tmp"
-        log "Ошибка сети при обновлении: $file"
+        log "Ошибка: Скачанные файлы слишком малы. Отмена."
+        rm -f "$GEO_DIR/geosite_RU.dat.tmp" "$GEO_DIR/geoip_RU.dat.tmp"
         exit 1
     fi
-done
+else
+    log "Ошибка сети при скачивании баз."
+    rm -f "$GEO_DIR/geosite_RU.dat.tmp" "$GEO_DIR/geoip_RU.dat.tmp"
+    exit 1
+fi
 
 systemctl reload xray 2>/dev/null || systemctl restart xray
 SCRIPT
@@ -587,9 +590,8 @@ setup_firewall() {
 install_geo_files() {
     section "Установка и принудительная загрузка geo файлов"
     mkdir -p /usr/local/share/xray
-    # Gemini Fix: Принудительно требуем успешного завершения скачивания баз при установке
     if ! "$SCRIPT_DIR/update_geo.sh"; then
-        error "Критическая ошибка: Не удалось загрузить гео-базы при первоначальной установке!"
+        error "Критическая ошибка: Не удалось загрузить geosite_RU.dat и geoip_RU.dat при первоначальной установке!"
     fi
 }
 
