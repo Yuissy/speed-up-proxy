@@ -240,7 +240,42 @@ EOF
 
 ###############################################################################
 # TLS CERTIFICATE
+# ИСПРАВЛЕНИЕ #5: проверка типа CF токена через реальный API-запрос
 ###############################################################################
+check_cf_token_type() {
+    local token="$1"
+    local email="${2:-}"
+
+    # Пробуем как API Token (Bearer)
+    local response
+    response=$(curl -s --max-time 10 --noproxy "api.cloudflare.com" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones" 2>/dev/null)
+
+    if echo "$response" | jq -e '.success == true' &>/dev/null; then
+        echo "token"
+        return 0
+    fi
+
+    # Пробуем как Global API Key (X-Auth-Key), требует email
+    if [[ -n "$email" ]]; then
+        response=$(curl -s --max-time 10 --noproxy "api.cloudflare.com" \
+            -H "X-Auth-Key: ${token}" \
+            -H "X-Auth-Email: ${email}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones" 2>/dev/null)
+
+        if echo "$response" | jq -e '.success == true' &>/dev/null; then
+            echo "key"
+            return 0
+        fi
+    fi
+
+    echo "invalid"
+    return 1
+}
+
 issue_certificate() {
     local domain="$1"
     local email="$2"
@@ -254,15 +289,26 @@ issue_certificate() {
     fi
 
     if [[ -n "$cf_token" ]]; then
-        info "Выпуск через DNS challenge (Cloudflare)"
+        info "Проверка Cloudflare токена..."
+        local token_type
+        token_type=$(check_cf_token_type "$cf_token" "$email")
+
+        if [[ "$token_type" == "invalid" ]]; then
+            error "Cloudflare токен недействителен. Проверьте токен и email."
+        fi
+
+        info "Тип токена: $token_type. Выпуск через DNS challenge (Cloudflare)"
         local cf_creds="/etc/letsencrypt/.cloudflare.credentials"
         touch "$cf_creds"
         chmod 600 "$cf_creds"
-        if [[ "$cf_token" =~ [A-Z] ]]; then
+
+        if [[ "$token_type" == "token" ]]; then
             echo "dns_cloudflare_api_token = ${cf_token}" > "$cf_creds"
         else
             echo "dns_cloudflare_api_key = ${cf_token}" > "$cf_creds"
+            echo "dns_cloudflare_email = ${email}" >> "$cf_creds"
         fi
+
         certbot certonly \
             --dns-cloudflare \
             --dns-cloudflare-credentials "$cf_creds" \
@@ -283,9 +329,9 @@ issue_certificate() {
         systemctl start nginx 2>/dev/null || true
     fi
 
-    # Автообновление
+    # ИСПРАВЛЕНИЕ #9: certbot renew каждые 15 дней вместо раз в 2 месяца
     if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
-        (crontab -l 2>/dev/null; echo "0 3 1 */2 * certbot -q renew --post-hook 'systemctl reload nginx'") | crontab -
+        (crontab -l 2>/dev/null; echo "0 3 */15 * * certbot -q renew --post-hook 'systemctl reload nginx'") | crontab -
     fi
 
     info "Сертификат выпущен: /etc/letsencrypt/live/${domain}/"
@@ -293,16 +339,15 @@ issue_certificate() {
 
 ###############################################################################
 # BBR
+# ИСПРАВЛЕНИЕ #8: отдельный файл sysctl.d вместо sysctl.conf, без дублирования
 ###############################################################################
 setup_bbr() {
     section "Включение BBR"
-    if ! grep -q "tcp_congestion_control = bbr" /etc/sysctl.conf 2>/dev/null; then
-        cat >> /etc/sysctl.conf <<'EOF'
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
+    cat > /etc/sysctl.d/99-bbr.conf <<'EOF'
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
 EOF
-        sysctl -p > /dev/null 2>&1
-    fi
+    sysctl --system > /dev/null 2>&1
     info "BBR: $(sysctl -n net.ipv4.tcp_congestion_control)"
 }
 
@@ -370,6 +415,9 @@ EOF
 
 ###############################################################################
 # AUTO UPDATES
+# ИСПРАВЛЕНИЕ #10: дедупликация cron записей
+# ИСПРАВЛЕНИЕ #11: откат в auto_update_xray.sh если Xray не запустился
+# ИСПРАВЛЕНИЕ #2: geo файлы только с runetfreedom
 ###############################################################################
 setup_auto_updates() {
     section "Настройка автообновлений"
@@ -379,18 +427,20 @@ setup_auto_updates() {
         | debconf-set-selections
     dpkg-reconfigure -f noninteractive unattended-upgrades 2>/dev/null
 
-    # Скрипт автообновления Xray
+    # Скрипт автообновления Xray с откатом при неудаче
     mkdir -p "$SCRIPT_DIR"
     cat > "$SCRIPT_DIR/auto_update_xray.sh" <<'SCRIPT'
 #!/usr/bin/env bash
-# Автообновление Xray-core (stable)
+# Автообновление Xray-core (stable) с автооткатом
 set -euo pipefail
+XRAY_BIN="/usr/local/bin/xray"
+XRAY_BAK="/usr/local/bin/xray.bak"
 LOG="/var/log/xray-cascade/update.log"
 mkdir -p "$(dirname "$LOG")"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
-CURRENT=$(/usr/local/bin/xray version 2>/dev/null | grep -oP 'Xray \K[\d.]+' | head -1)
+CURRENT=$("$XRAY_BIN" version 2>/dev/null | grep -oP 'Xray \K[\d.]+' | head -1)
 LATEST=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
     | jq -r '.tag_name' | tr -d 'v')
 
@@ -405,20 +455,44 @@ URL=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" \
     | jq -r ".assets[] | select(.name==\"Xray-linux-${ARCH}.zip\") | .browser_download_url")
 
 TMP=$(mktemp -d)
+trap "rm -rf $TMP" EXIT
+
 curl -sL --max-time 120 -o "$TMP/xray.zip" "$URL"
 unzip -o "$TMP/xray.zip" -d "$TMP" > /dev/null
-cp -f /usr/local/bin/xray /usr/local/bin/xray.bak
-cp -f "$TMP/xray" /usr/local/bin/xray
-chmod +x /usr/local/bin/xray
-rm -rf "$TMP"
-systemctl restart xray
-log "Xray обновлён до $LATEST"
+
+# Бэкап текущей версии
+cp -f "$XRAY_BIN" "$XRAY_BAK"
+
+cp -f "$TMP/xray" "$XRAY_BIN"
+chmod +x "$XRAY_BIN"
+
+# Перезапуск с проверкой
+if systemctl restart xray; then
+    sleep 3
+    if systemctl is-active --quiet xray; then
+        log "Xray обновлён до $LATEST"
+    else
+        log "ОШИБКА: Xray не запустился после обновления до $LATEST. Откат..."
+        cp -f "$XRAY_BAK" "$XRAY_BIN"
+        chmod +x "$XRAY_BIN"
+        systemctl restart xray
+        log "Откат выполнен: $("$XRAY_BIN" version 2>/dev/null | head -1)"
+    fi
+else
+    log "ОШИБКА: systemctl restart xray провалился. Откат..."
+    cp -f "$XRAY_BAK" "$XRAY_BIN"
+    chmod +x "$XRAY_BIN"
+    systemctl restart xray
+    log "Откат выполнен: $("$XRAY_BIN" version 2>/dev/null | head -1)"
+fi
 SCRIPT
     chmod +x "$SCRIPT_DIR/auto_update_xray.sh"
 
-    # Скрипт обновления geo файлов
+    # Скрипт обновления geo файлов — только runetfreedom
     cat > "$SCRIPT_DIR/update_geo.sh" <<'SCRIPT'
 #!/usr/bin/env bash
+# Обновление geo файлов с runetfreedom/russia-v2ray-rules-dat
+# geosite.dat включает все категории v2fly (category-ads-all, etc.) + ru-blocked
 set -euo pipefail
 LOG="/var/log/xray-cascade/update.log"
 mkdir -p "$(dirname "$LOG")"
@@ -427,8 +501,10 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 GEO_DIR="/usr/local/share/xray"
 mkdir -p "$GEO_DIR"
 
+BASE_URL="https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release"
+
 for file in geoip.dat geosite.dat; do
-    URL="https://github.com/v2fly/v2ray-rules-dat/releases/latest/download/${file}"
+    URL="${BASE_URL}/${file}"
     if curl -sL --max-time 60 -o "$GEO_DIR/${file}.tmp" "$URL"; then
         mv "$GEO_DIR/${file}.tmp" "$GEO_DIR/${file}"
         log "Обновлён: $file"
@@ -442,14 +518,16 @@ systemctl reload xray 2>/dev/null || systemctl restart xray
 SCRIPT
     chmod +x "$SCRIPT_DIR/update_geo.sh"
 
-    # Cron
+    # Cron — с дедупликацией
     apt-get install -y cron
     systemctl enable cron
     systemctl start cron
     local cron_xray="0 4 * * 6 $SCRIPT_DIR/auto_update_xray.sh >> /var/log/xray-cascade/update.log 2>&1"
     local cron_geo="0 3 * * 0 $SCRIPT_DIR/update_geo.sh >> /var/log/xray-cascade/update.log 2>&1"
 
-    (crontab -l 2>/dev/null || true; echo "$cron_xray"; echo "$cron_geo") | crontab -
+    # Удаляем старые записи перед добавлением — дедупликация
+    (crontab -l 2>/dev/null | grep -v "auto_update_xray\|update_geo"; \
+        echo "$cron_xray"; echo "$cron_geo") | crontab -
 
     info "Автообновление настроено (Xray — суббота 04:00, geo — воскресенье 03:00)"
 }
@@ -531,7 +609,7 @@ EOF
 }
 
 ###############################################################################
-# NFTABLES / UFW
+# UFW
 ###############################################################################
 setup_firewall() {
     local mode="$1"          # server1 | server2
@@ -697,6 +775,11 @@ EOF
 
 ###############################################################################
 # SERVER 1 — XRAY CONFIG
+# ИСПРАВЛЕНИЕ #1: reality_uuid передаётся как аргумент, не генерируется в heredoc
+# ИСПРАВЛЕНИЕ #4: убран блок settings{} из realitySettings на сервере
+# ИСПРАВЛЕНИЕ #2: роутинг использует geosite:ru-blocked (из runetfreedom geosite.dat)
+# ИСПРАВЛЕНИЕ #6: routeOnly: true в sniffing inbound-xhttp
+# ИСПРАВЛЕНИЕ #8а: исправлен парсинг PublicKey из xray x25519
 ###############################################################################
 configure_server1_xray() {
     local client_uuid="$1"
@@ -710,6 +793,7 @@ configure_server1_xray() {
     local reality_public_key="$9"
     local reality_short_id="${10}"
     local domain="${11}"
+    local reality_uuid="${12}"
 
     section "Конфигурация Xray (Сервер 1)"
 
@@ -772,7 +856,7 @@ configure_server1_xray() {
       "sniffing": {
         "enabled": true,
         "destOverride": ["http", "tls", "quic"],
-        "routeOnly": false
+        "routeOnly": true
       }
     },
     {
@@ -783,7 +867,7 @@ configure_server1_xray() {
       "settings": {
         "clients": [
           {
-            "id": "$(generate_uuid)",
+            "id": "${reality_uuid}",
             "flow": "xtls-rprx-vision"
           }
         ],
@@ -797,13 +881,7 @@ configure_server1_xray() {
           "dest": "127.0.0.1:443",
           "serverNames": ["${domain}"],
           "privateKey": "${reality_private_key}",
-          "shortIds": ["${sid1}", "${sid2}", "${sid3}"],
-          "settings": {
-            "publicKey": "${reality_public_key}",
-            "fingerprint": "firefox",
-            "serverName": "",
-            "spiderX": "/"
-          }
+          "shortIds": ["${reality_short_id}", "${sid1}", "${sid2}", "${sid3}"]
         },
         "tcpSettings": {
           "acceptProxyProtocol": false,
@@ -905,7 +983,7 @@ configure_server1_xray() {
       },
       {
         "type": "field",
-        "domain": ["ext:geosite_RU.dat:ru-blocked"],
+        "domain": ["geosite:ru-blocked"],
         "outboundTag": "cascade"
       },
       {
@@ -928,6 +1006,7 @@ EOF
 
 ###############################################################################
 # SERVER 1 — NGINX CONFIG
+# ИСПРАВЛЕНИЕ #3: убран chunked_transfer_encoding off
 ###############################################################################
 configure_server1_nginx() {
     local domain="$1"
@@ -999,7 +1078,6 @@ server {
         proxy_request_buffering off;
         proxy_buffering off;
         proxy_cache off;
-        chunked_transfer_encoding off;
         client_max_body_size 0;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -1012,7 +1090,7 @@ server {
         add_header CDN-Cache-Control "no-store" always;
     }
 
-    # Static site (fallback / self-steal)
+    # Static site (fallback)
     location / {
         try_files \$uri \$uri/ =404;
     }
@@ -1141,6 +1219,7 @@ print_client_config() {
     echo "║  Протокол: VLESS + XHTTP (packet-up) + TLS"
     echo "║  SNI:      ${domain}"
     echo "║  Mode:     packet-up"
+    echo "║  Fingerprint: firefox"
     echo "╠══════════════════════════════════════════════════════════════╣"
     echo "║  [Reality — резервный]                                       ║"
     echo "║  Адрес:    ${server1_ip}"
@@ -1151,6 +1230,7 @@ print_client_config() {
     echo "║  SNI:      ${domain}"
     echo "║  PublicKey: ${reality_public_key}"
     echo "║  ShortID:  ${reality_short_id}"
+    echo "║  Fingerprint: firefox"
     echo "╠══════════════════════════════════════════════════════════════╣"
     echo "║  Утилиты:                                                    ║"
     echo "║  xray-log warning|info|debug|none  — уровень логов           ║"
@@ -1226,7 +1306,6 @@ run_server1() {
     local server1_ip
     server1_ip=$(get_public_ip)
 
-    # Сбор данных
     local domain email cf_token=""
     local server2_ip server2_port server2_uuid server2_path
     local proxy_ip="" proxy_port="1080"
@@ -1294,12 +1373,19 @@ run_server1() {
     reality_port=$(random_port)
 
     # Генерация ключей Reality
+    # ИСПРАВЛЕНИЕ #8а: надёжный парсинг PublicKey
     local key_pair reality_private_key reality_public_key
     key_pair=$("$XRAY_BIN" x25519 2>/dev/null)
-    reality_private_key=$(echo "$key_pair" | grep "PrivateKey:" | awk '{print $2}')
-    reality_public_key=$(echo "$key_pair" | grep "PublicKey)" | awk '{print $NF}')
+    reality_private_key=$(echo "$key_pair" | grep -i "private" | awk '{print $NF}')
+    reality_public_key=$(echo "$key_pair" | grep -i "public" | awk '{print $NF}')
+
+    [[ -n "$reality_private_key" && -n "$reality_public_key" ]] \
+        || error "Не удалось сгенерировать ключи Reality"
+
     local reality_short_id
-    reality_short_id=$(openssl rand -hex 2)
+    reality_short_id=$(openssl rand -hex 4)
+
+    # ИСПРАВЛЕНИЕ #1: reality_uuid генерируется здесь и передаётся в функцию
     local reality_uuid
     reality_uuid=$(generate_uuid)
 
@@ -1311,7 +1397,7 @@ run_server1() {
         "$client_uuid" "$xhttp_path" \
         "$server2_ip" "$server2_port" "$server2_uuid" "$server2_path" \
         "$reality_port" "$reality_private_key" "$reality_public_key" \
-        "$reality_short_id" "$domain"
+        "$reality_short_id" "$domain" "$reality_uuid"
 
     configure_server1_nginx "$domain" "$xhttp_path"
 
