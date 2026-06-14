@@ -44,7 +44,20 @@ generate_uuid() {
 }
 
 generate_path() {
-    openssl rand -hex 12
+    local templates=(
+        "api/v1/data"
+        "static/js/chunk"
+        "assets/v3/conf"
+        "cdn/resources/load"
+        "api/v2/sync"
+        "_next/static/chunks"
+        "wp-content/uploads/cache"
+        "content/dam/assets"
+        "api/graphql/batch"
+        "media/streams/segment"
+    )
+    local base="${templates[$((RANDOM % ${#templates[@]}))]}"
+    echo "${base}/$(openssl rand -hex 6)"
 }
 
 random_port() {
