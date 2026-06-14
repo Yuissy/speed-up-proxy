@@ -718,11 +718,15 @@ configure_server2() {
     # Генерация self-signed сертификата на 10 лет для TLS между VPS1 и VPS2
     local cert_dir="/usr/local/etc/xray/tls"
     mkdir -p "$cert_dir"
+    local server2_ip
+    server2_ip=$(get_public_ip)
+
     openssl req -x509 -newkey rsa:4096 \
         -keyout "$cert_dir/server.key" \
         -out "$cert_dir/server.crt" \
         -days 3650 -nodes \
         -subj "/CN=internal-cascade/O=cascade/C=XX" \
+        -addext "subjectAltName=IP:${server2_ip}" \
         2>/dev/null
 
     chmod 600 "$cert_dir/server.key"
