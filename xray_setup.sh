@@ -718,6 +718,7 @@ configure_server2() {
     # Генерация self-signed сертификата на 10 лет для TLS между VPS1 и VPS2
     local cert_dir="/usr/local/etc/xray/tls"
     mkdir -p "$cert_dir"
+
     local server2_ip
     server2_ip=$(get_public_ip)
 
@@ -732,14 +733,14 @@ configure_server2() {
     chmod 600 "$cert_dir/server.key"
     chmod 644 "$cert_dir/server.crt"
 
-    # Вычисляем pinned hash для передачи на VPS1
-    pinned_hash=$(openssl x509 -in "$cert_dir/server.crt" \
-        -pubkey -noout 2>/dev/null \
-        | openssl pkey -pubin -outform DER 2>/dev/null \
-        | openssl dgst -sha256 -binary \
-        | openssl enc -base64)
+    # Вычисляем pinned hash (SHA256 от полного DER-сертификата, в hex)
+    # для pinnedPeerCertSha256 — это поле принимает hex-строку всего сертификата,
+    # не base64 от публичного ключа
+    pinned_hash=$(openssl x509 -in "$cert_dir/server.crt" -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -hex \
+        | awk '{print $NF}')
 
-    info "Pinned cert hash: $pinned_hash"
+    info "Pinned cert hash (SHA256 hex): $pinned_hash"
 
     cat > "$XRAY_CONF" <<EOF
 {
@@ -997,7 +998,7 @@ configure_server1_xray() {
         "security": "tls",
         "tlsSettings": {
           "allowInsecure": false,
-          "pinnedPeerCertificateChainSha256": ["${server2_pinned_hash}"],
+          "pinnedPeerCertSha256": "${server2_pinned_hash}",
           "alpn": ["h2", "http/1.1"],
           "fingerprint": "firefox"
         },
@@ -1005,6 +1006,9 @@ configure_server1_xray() {
           "path": "${server2_path}",
           "mode": "packet-up",
           "noSSEHeader": false,
+          "scMaxEachPostBytes": "500000-1000000",
+          "scMinPostsIntervalMs": "50-150",
+          "xPaddingBytes": "16-64",
           "xPaddingObfsMode": true,
           "xPaddingPlacement": "query",
           "xPaddingMethod": "tokenish",
@@ -1332,6 +1336,92 @@ print_client_config() {
     echo "║  xray-log warning|info|debug|none  — уровень логов           ║"
     echo "║  Логи Xray: /var/log/xray-cascade/                          ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo " НАСТРОЙКА v2rayN — профиль [XHTTP — основной]"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Configuration:"
+    echo "  Address              : ${domain}"
+    echo "  Port                 : 443"
+    echo "  UUID(id)             : ${client_uuid}"
+    echo "  Flow                 : (оставить пустым)"
+    echo "  Encryption           : none"
+    echo "  Mux                  : выключен (off)"
+    echo ""
+    echo "Transport:"
+    echo "  Transport protocol   : xhttp"
+    echo "  xhttp mode           : packet-up"
+    echo "  Host                 : (оставить пустым)"
+    echo "  Path                 : ${xhttp_path}"
+    echo ""
+    echo "XHTTP Extra — вставить целиком этот JSON в поле 'XHTTP Extra':"
+    echo "----------------------------------------------------------------"
+    cat <<EXTRAEOF
+{
+  "scMaxBufferedPosts": 30,
+  "scMaxEachPostBytes": "500000-1000000",
+  "scMinPostsIntervalMs": "50-150",
+  "xPaddingBytes": "16-64",
+  "xPaddingObfsMode": true,
+  "xPaddingPlacement": "query",
+  "xPaddingMethod": "tokenish",
+  "uplinkDataPlacement": "body",
+  "xmux": {
+    "maxConnections": 1,
+    "cMaxReuseTimes": 0,
+    "hMaxRequestTimes": "300-600",
+    "hMaxReusableSecs": "900-1800",
+    "hKeepAlivePeriod": 0
+  }
+}
+EXTRAEOF
+    echo "----------------------------------------------------------------"
+    echo ""
+    echo "TLS:"
+    echo "  TLS                  : tls"
+    echo "  SNI                  : ${domain}"
+    echo "  Fingerprint          : firefox"
+    echo "  ALPN                 : h2,http/1.1 (или оставить пустым)"
+    echo "  Allow Insecure       : выключено (off)"
+    echo "  Certificate Pinning  : не задавать"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo " НАСТРОЙКА v2rayN — профиль [Reality — резервный]"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Configuration:"
+    echo "  Address              : ${server1_ip}"
+    echo "  Port                 : ${reality_port}"
+    echo "  UUID(id)             : ${reality_uuid}"
+    echo "  Flow                 : xtls-rprx-vision"
+    echo "  Encryption           : none"
+    echo "  Mux                  : выключен (off)"
+    echo ""
+    echo "Transport:"
+    echo "  Transport protocol   : tcp (raw)"
+    echo "  Header type          : none"
+    echo ""
+    echo "TLS:"
+    echo "  TLS                  : reality"
+    echo "  SNI                  : ${domain}"
+    echo "  Fingerprint          : firefox"
+    echo "  PublicKey            : ${reality_public_key}"
+    echo "  ShortID              : ${reality_short_id}"
+    echo "  SpiderX              : / (или оставить пустым)"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo " ПРОВЕРКА ПОДКЛЮЧЕНИЯ"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "После подключения через любой профиль откройте в браузере"
+    echo "(через системный/SOCKS-прокси v2rayN):"
+    echo "  https://2ip.io  или  https://ifconfig.me"
+    echo ""
+    echo "Должен отображаться IP Сервера 2 (выход), а не IP Сервера 1"
+    echo "и не ваш реальный IP."
+    echo "════════════════════════════════════════════════════════════════"
 }
 
 ###############################################################################
