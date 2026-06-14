@@ -675,6 +675,28 @@ configure_server2() {
 
     mkdir -p "$XRAY_CONF_DIR"
 
+    # Генерация self-signed сертификата на 10 лет для TLS между VPS1 и VPS2
+    local cert_dir="/usr/local/etc/xray/tls"
+    mkdir -p "$cert_dir"
+    openssl req -x509 -newkey rsa:4096 \
+        -keyout "$cert_dir/server.key" \
+        -out "$cert_dir/server.crt" \
+        -days 3650 -nodes \
+        -subj "/CN=internal-cascade/O=cascade/C=XX" \
+        2>/dev/null
+
+    chmod 600 "$cert_dir/server.key"
+    chmod 644 "$cert_dir/server.crt"
+
+    # Вычисляем pinned hash для передачи на VPS1
+    pinned_hash=$(openssl x509 -in "$cert_dir/server.crt" \
+        -pubkey -noout 2>/dev/null \
+        | openssl pkey -pubin -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -binary \
+        | openssl enc -base64)
+
+    info "Pinned cert hash: $pinned_hash"
+
     cat > "$XRAY_CONF" <<EOF
 {
   "log": {
@@ -697,7 +719,17 @@ configure_server2() {
       },
       "streamSettings": {
         "network": "xhttp",
-        "security": "none",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "/usr/local/etc/xray/tls/server.crt",
+              "keyFile": "/usr/local/etc/xray/tls/server.key"
+            }
+          ],
+          "alpn": ["h2", "http/1.1"],
+          "minVersion": "1.2"
+        },
         "xhttpSettings": {
           "path": "${xhttp_path}",
           "mode": "packet-up",
@@ -799,6 +831,7 @@ configure_server1_xray() {
     local reality_short_id="${10}"
     local domain="${11}"
     local reality_uuid="${12}"
+    local server2_pinned_hash="${13}"
 
     section "Конфигурация Xray (Сервер 1)"
 
@@ -917,7 +950,13 @@ configure_server1_xray() {
       },
       "streamSettings": {
         "network": "xhttp",
-        "security": "none",
+        "security": "tls",
+        "tlsSettings": {
+          "allowInsecure": false,
+          "pinnedPeerCertificateChainSha256": ["${server2_pinned_hash}"],
+          "alpn": ["h2", "http/1.1"],
+          "fingerprint": "firefox"
+        },
         "xhttpSettings": {
           "path": "${server2_path}",
           "mode": "packet-up",
@@ -1331,6 +1370,7 @@ run_server1() {
     read -rp "$(question 'Порт Сервера 2: ')" server2_port
     read -rp "$(question 'UUID Сервера 2: ')" server2_uuid
     read -rp "$(question 'Путь Сервера 2: ')" server2_path
+    read -rp "$(question 'Pinned cert hash Сервера 2: ')" server2_pinned_hash
 
     echo
     read -rp "$(question 'Использовать SOCKS5 прокси для установки? [y/N]: ')" use_proxy
@@ -1403,7 +1443,7 @@ run_server1() {
         "$client_uuid" "$xhttp_path" \
         "$server2_ip" "$server2_port" "$server2_uuid" "$server2_path" \
         "$reality_port" "$reality_private_key" "$reality_public_key" \
-        "$reality_short_id" "$domain" "$reality_uuid"
+        "$reality_short_id" "$domain" "$reality_uuid" "$server2_pinned_hash"
 
     configure_server1_nginx "$domain" "$xhttp_path"
 
