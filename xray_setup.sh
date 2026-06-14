@@ -420,9 +420,6 @@ EOF
 # ИСПРАВЛЕНИЕ #2: geo файлы только с runetfreedom
 ###############################################################################
 setup_auto_updates() {
-    echo ">>> ENTER setup_auto_updates"
-    section "Настройка автообновлений"
-    echo ">>> after section"
     section "Настройка автообновлений"
 
     apt-get install -y unattended-upgrades > /dev/null 2>&1
@@ -525,11 +522,9 @@ SCRIPT
     apt-get install -y cron
     systemctl enable cron
     systemctl start cron
-    echo ">>> before cron block"
     local cron_xray="0 4 * * 6 $SCRIPT_DIR/auto_update_xray.sh >> /var/log/xray-cascade/update.log 2>&1"
     local cron_geo="0 3 * * 0 $SCRIPT_DIR/update_geo.sh >> /var/log/xray-cascade/update.log 2>&1"
-    echo ">>> cron vars set"
-
+    
     # Удаляем старые записи перед добавлением — дедупликация (через временный файл, без crontab -)
     local cron_tmp
     cron_tmp=$(mktemp)
@@ -539,8 +534,7 @@ SCRIPT
     crontab "$cron_tmp"
     rm -f "$cron_tmp"
 
-    info "Автообновление настроено (Xray — суббота 04:00, geo — воскресенье 03:00)"
-    echo ">>> EXIT setup_auto_updates"
+    info "Автообновление настроено (Xray — суббота 04:00, geo — воскресенье 03:00)"    
 }
 
 ###############################################################################
