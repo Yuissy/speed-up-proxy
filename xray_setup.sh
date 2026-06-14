@@ -191,8 +191,35 @@ install_nginx() {
     section "Установка Nginx"
 
     if ! command -v nginx &>/dev/null; then
-        apt-get install -y nginx
+        info "Подключение официального репозитория nginx.org (stable)"
+
+        apt-get install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring > /dev/null 2>&1
+
+        curl -fsSL https://nginx.org/keys/nginx_signing.key \
+            | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+
+        echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" \
+            > /etc/apt/sources.list.d/nginx.list
+
+        # Приоритет пакетов nginx.org выше пакетов из Ubuntu
+        cat > /etc/apt/preferences.d/99-nginx <<'EOF'
+Package: *
+Pin: origin nginx.org
+Pin-Priority: 900
+EOF
+
+        apt-get update -qq
+
+        if apt-get install -y nginx; then
+            info "Nginx установлен из nginx.org: $(nginx -v 2>&1)"
+        else
+            warning "Не удалось установить из nginx.org, откат на репозиторий Ubuntu"
+            rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99-nginx
+            apt-get update -qq
+            apt-get install -y nginx
+        fi
     fi
+
 
     mkdir -p "$NGINX_LOCATIONS"
 
@@ -1091,8 +1118,7 @@ server {
 
 # HTTPS main
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name ${domain} *.${domain};
 
     ssl_certificate     /etc/letsencrypt/live/${domain}/fullchain.pem;
