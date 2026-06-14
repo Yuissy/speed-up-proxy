@@ -1297,6 +1297,7 @@ run_server2() {
     echo "║  Порт:         ${listen_port}"
     echo "║  UUID:         ${uuid}"
     echo "║  Путь:         ${xhttp_path}"
+    echo "║  Pinned Hash:  ${pinned_hash}"
     echo "╚══════════════════════════════════════════════════════════════╝"
 }
 
