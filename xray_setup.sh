@@ -530,10 +530,14 @@ SCRIPT
     local cron_geo="0 3 * * 0 $SCRIPT_DIR/update_geo.sh >> /var/log/xray-cascade/update.log 2>&1"
     echo ">>> cron vars set"
 
-    # Удаляем старые записи перед добавлением — дедупликация
-    { crontab -l 2>/dev/null | grep -v "auto_update_xray\|update_geo" || true; \
-    echo ">>> cron block done"
-        echo "$cron_xray"; echo "$cron_geo"; } | crontab -
+    # Удаляем старые записи перед добавлением — дедупликация (через временный файл, без crontab -)
+    local cron_tmp
+    cron_tmp=$(mktemp)
+    crontab -l 2>/dev/null | grep -v "auto_update_xray\|update_geo" > "$cron_tmp" || true
+    echo "$cron_xray" >> "$cron_tmp"
+    echo "$cron_geo" >> "$cron_tmp"
+    crontab "$cron_tmp"
+    rm -f "$cron_tmp"
 
     info "Автообновление настроено (Xray — суббота 04:00, geo — воскресенье 03:00)"
     echo ">>> EXIT setup_auto_updates"
