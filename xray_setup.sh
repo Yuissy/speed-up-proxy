@@ -1175,7 +1175,16 @@ server {
 }
 EOF
 
-    nginx -t && systemctl reload nginx
+    if nginx -t; then
+        systemctl daemon-reload
+        if systemctl is-active --quiet nginx; then
+            systemctl reload nginx
+        else
+            systemctl start nginx
+        fi
+    else
+        error "Конфигурация Nginx содержит ошибки"
+    fi
     info "Nginx настроен"
 }
 
@@ -1442,7 +1451,12 @@ run_server1() {
     local client_uuid xhttp_path reality_port
     client_uuid=$(generate_uuid)
     xhttp_path="/$(generate_path)"
-    reality_port=$(random_port)
+    if ! ss -tlnp 2>/dev/null | grep -q ":8443 "; then
+        reality_port=8443
+    else
+        warning "Порт 8443 занят, используется случайный порт"
+        reality_port=$(random_port)
+    fi
 
     # Генерация ключей Reality
     # ИСПРАВЛЕНИЕ #8а: надёжный парсинг PublicKey
